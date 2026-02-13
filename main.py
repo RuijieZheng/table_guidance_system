@@ -253,13 +253,18 @@ class TableGuidanceSystem:
             use_markers=self.use_markers
         )
         
-        # 7.5 Draw general detected objects (any object the system can see)
+        # 7.5 Draw YOLO-detected objects with their actual names
         for gen_obj in self.object_detector.general_objects:
             if gen_obj.visible:
-                x, y, w, h = gen_obj.bounding_box
-                cv2.rectangle(output, (x, y), (x + w, y + h), (200, 200, 0), 1)
-                cv2.putText(output, "Object", (x, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+                x, y, bw, bh = gen_obj.bounding_box
+                color = gen_obj.color_bgr
+                label = f"{gen_obj.name} {gen_obj.confidence:.0%}"
+                cv2.rectangle(output, (x, y), (x + bw, y + bh), color, 2)
+                # Label background for readability
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                cv2.rectangle(output, (x, y - th - 8), (x + tw + 4, y), color, -1)
+                cv2.putText(output, label, (x + 2, y - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
         
         # 8. Always draw hand tracking overlay when hand is detected
         if hand_info.detected:

@@ -24,6 +24,10 @@ build/
 # Models / large files
 models/
 *.task
+*.onnx
+
+# Test files
+test_*.py
 
 # Logs
 *.log

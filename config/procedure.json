@@ -5,22 +5,21 @@
         {
             "id": "object_1",
             "name": "Phone",
-            "color_lower": [0, 0, 0],
-            "color_upper": [180, 255, 80],
-            "color_name": "dark",
+            "yolo_class": "cell phone",
+            "color_name": "yolo",
             "min_area": 2000
         },
         {
             "id": "object_2",
             "name": "Mouse",
-            "color_lower": [0, 0, 0],
-            "color_upper": [180, 255, 80],
-            "color_name": "dark",
+            "yolo_class": "mouse",
+            "color_name": "yolo",
             "min_area": 1500
         },
         {
             "id": "object_3",
             "name": "Cup",
+            "yolo_class": "cup",
             "color_lower": [0, 100, 100],
             "color_upper": [10, 255, 255],
             "color_name": "red",

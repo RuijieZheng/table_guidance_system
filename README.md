@@ -10,8 +10,9 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 
 ### Features
 
-- **ArUco Marker-Based Table Detection**: Uses 4 fiducial markers to define the working area and compute perspective transformation (homography)
-- **Real-Time Object Detection**: Color-based detection for cups, bottles, and plates with configurable HSV ranges
+- **ArUco Marker-Based Table Detection**: Uses 4 fiducial markers to define the working area and compute perspective transformation (homography). Can be skipped for quick demo mode.
+- **YOLO Object Detection (Primary)**: YOLOv5s ONNX model identifies 80 COCO classes (cup, bottle, cell phone, mouse, keyboard, laptop, etc.) — each object is labeled by name with confidence score
+- **Color-Based Detection (Fallback)**: HSV segmentation for color-specific objects when YOLO model is unavailable
 - **Hand Tracking (Bonus)**: MediaPipe-based hand tracking to detect when users are interacting with objects
 - **Perspective-Warped Visualizations**: Target zones are rendered with proper perspective to align with the table plane
 - **State Management**: Tracks procedure progress through calibration → initialization → task execution → completion
@@ -24,7 +25,8 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 │                     Main Application (main.py)                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Marker    │  │   Object    │  │    Hand     │              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │   Marker    │  │ YOLO Object │  │    Hand     │              │
 │  │  Detector   │  │  Detector   │  │   Tracker   │              │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
 │         │                │                │                      │
@@ -50,7 +52,8 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 | Module | File | Description |
 |--------|------|-------------|
 | Marker Detector | `modules/marker_detector.py` | ArUco marker detection, homography computation, coordinate transformation |
-| Object Detector | `modules/object_detector.py` | Color-based object detection with HSV segmentation |
+| Object Detector | `modules/object_detector.py` | YOLO + color-based object detection (identifies objects by name) |
+| YOLO Detector | `modules/yolo_detector.py` | YOLOv5s ONNX inference — recognizes 80 COCO classes |
 | Hand Tracker | `modules/hand_tracker.py` | MediaPipe hand tracking, gesture recognition |
 | State Manager | `modules/state_manager.py` | Procedure state machine, step tracking, completion detection |
 | Visualizer | `modules/visualizer.py` | AR overlay rendering with perspective warping |
@@ -61,8 +64,8 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 
 - Python 3.8+
 - Webcam
-- Printer (for ArUco markers)
-- Colored objects: red cup, blue bottle, green plate (or calibrate for your objects)
+- Common desk objects (phone, mouse, cup, bottle, etc. — detected by YOLO)
+- (Optional) Printer for ArUco markers
 
 ### Installation
 
@@ -85,12 +88,13 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
    pip install -r requirements.txt
    ```
 
-4. **Download hand tracking model** (if not already present):
-   The model file `models/hand_landmarker.task` is required for hand tracking.
-   It will show a download link if missing. Alternatively:
+4. **Download models** (if not already present):
    ```bash
    mkdir models
+   # Hand tracking model
    curl -o models/hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+   # YOLO object detection model
+   curl -L -o models/yolov5s.onnx https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.onnx
    ```
 
 5. **(Optional) Generate ArUco markers**:
@@ -135,11 +139,13 @@ python main.py --generate-markers   # Generate markers only
 ## Task Workflow
 
 1. **Calibration** (optional): System detects all 4 corner markers and computes table homography. Press SPACE to skip.
-2. **Initialization**: User places objects randomly on the table
-3. **Task 1**: Move the Red Cup to the Center zone
-4. **Task 2**: Move the Blue Bottle to the Top-Right zone
-5. **Task 3**: Move the Green Plate to the Top-Left zone
+2. **Initialization**: User places objects (phone, mouse, cup) randomly on the table
+3. **Task 1**: Move the Phone to the Center zone
+4. **Task 2**: Move the Mouse to the Top-Right zone
+5. **Task 3**: Move the Cup to the Top-Left zone
 6. **Completion**: "Table Set Successfully!" message displayed
+
+YOLO continuously identifies all visible objects on the desk (labeled with name + confidence).
 
 ## Configuration
 
@@ -186,8 +192,7 @@ The procedure is defined in `config/procedure.json`:
 | opencv-python | ≥4.5 | Image processing, visualization |
 | opencv-contrib-python | ≥4.5 | ArUco marker detection |
 | numpy | ≥1.19 | Numerical operations |
-| mediapipe | ≥0.10.30 | Hand tracking (Tasks API) |
-
+| mediapipe | ≥0.10.30 | Hand tracking (Tasks API) || onnxruntime | ≥1.16 | YOLO model inference (no PyTorch needed) |
 ## Project Structure
 
 ```
@@ -200,7 +205,8 @@ table_guidance_system/
 ├── modules/
 │   ├── __init__.py
 │   ├── marker_detector.py  # ArUco detection & homography
-│   ├── object_detector.py  # Color-based object detection
+│   ├── object_detector.py  # YOLO + color-based object detection
+│   ├── yolo_detector.py    # YOLOv5s ONNX inference engine
 │   ├── hand_tracker.py     # MediaPipe hand tracking
 │   ├── state_manager.py    # Procedure state machine
 │   └── visualizer.py       # AR overlay rendering
@@ -208,6 +214,14 @@ table_guidance_system/
 │   └── hand_landmarker.task # MediaPipe hand model (auto-downloaded)
 └── markers/                # Generated ArUco markers (optional)
 ```
+
+### Object Detection Details
+
+The system uses **YOLOv5s** (via ONNX Runtime) as the primary detection method:
+- Recognizes **80 COCO classes** including: cup, bottle, cell phone, mouse, keyboard, laptop, book, remote, scissors, etc.
+- Each detected object is **labeled by name** with confidence score
+- No PyTorch required — runs entirely on ONNX Runtime (CPU)
+- Falls back to color-based HSV detection if YOLO model is unavailable
 
 ## Demo Video
 
@@ -230,7 +244,7 @@ The video should demonstrate:
 
 ## Future Improvements
 
-- [ ] Add YOLO-based object detection for better accuracy
+- [x] Add YOLO-based object detection for better accuracy
 - [ ] Implement voice guidance for accessibility
 - [ ] Add support for custom task sequences via UI
 - [ ] Persist calibration settings between sessions
@@ -238,8 +252,7 @@ The video should demonstrate:
 
 ## Author
 
-[Your Name]  
-[Your Email]  
+Ruijie Zheng  
 February 2026
 
 ## License

@@ -7,6 +7,7 @@ from .object_detector import ObjectDetector, DetectedObject, ObjectStatus, Color
 from .hand_tracker import HandTracker, HandInfo, HandState
 from .state_manager import StateManager, SystemStatus, ProcedureState, StepState, TargetZone
 from .visualizer import Visualizer, VisualizationConfig
+from .yolo_detector import YOLODetector
 
 __all__ = [
     'MarkerDetector',
@@ -15,6 +16,7 @@ __all__ = [
     'DetectedObject',
     'ObjectStatus',
     'ColorCalibrator',
+    'YOLODetector',
     'HandTracker',
     'HandInfo',
     'HandState',

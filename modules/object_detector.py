@@ -1,8 +1,12 @@
 """
 Object Detection Module
 =======================
-Detects and tracks objects (cup, bottle, plate) using color-based segmentation.
-Also supports YOLO-based detection as an optional enhancement.
+Detects and tracks objects using:
+  1. YOLO (primary) - identifies objects by name (cup, phone, mouse, etc.)
+  2. Color-based segmentation (fallback) - detects by HSV color range
+  3. Contour-based detection (fallback) - detects dark/any objects by shape
+
+The YOLO detector uses a YOLOv5s ONNX model (80 COCO classes).
 """
 
 import cv2
@@ -10,6 +14,13 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+
+# Import YOLO detector
+try:
+    from .yolo_detector import YOLODetector, DISPLAY_NAMES, CLASS_COLORS
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
 
 
 class ObjectStatus(Enum):
@@ -55,10 +66,19 @@ class ObjectConfig:
     color_name: str
     min_area: int = 3000
     color_bgr: Tuple[int, int, int] = field(default_factory=lambda: (255, 255, 255))
+    # YOLO class name to match (e.g., "cell phone", "cup", "mouse")
+    yolo_class: str = ""
 
 
 class ObjectDetector:
-    """Detects objects using color-based segmentation and general contour detection."""
+    """
+    Detects objects using YOLO (primary) or color-based segmentation (fallback).
+    
+    Detection priority:
+      1. YOLO model identifies objects by class name (cell phone, mouse, cup, etc.)
+      2. Color-based HSV detection (when color_name is set and YOLO not available)
+      3. Contour-based detection (for 'dark'/'any' color_name)
+    """
     
     def __init__(self, objects_config: List[Dict] = None):
         """
@@ -70,7 +90,21 @@ class ObjectDetector:
         self.object_configs: Dict[str, ObjectConfig] = {}
         self.detected_objects: Dict[str, DetectedObject] = {}
         
-        # General detection results (any object, not color-specific)
+        # Initialize YOLO detector
+        self.yolo: Optional[YOLODetector] = None
+        if YOLO_AVAILABLE:
+            self.yolo = YOLODetector(confidence_threshold=0.3)
+            if not self.yolo.is_available:
+                self.yolo = None
+                
+        # Cache YOLO detections to avoid running twice per frame
+        self._last_yolo_detections: List[Dict] = []
+        
+        # Frame skip for YOLO (run every N frames for performance)
+        self._frame_count = 0
+        self._yolo_skip_frames = 2  # Run YOLO every 3rd frame (0, 3, 6, ...)
+        
+        # General detection results (all YOLO-detected objects)
         self.general_objects: List[DetectedObject] = []
         
         # Color mapping for visualization
@@ -95,12 +129,34 @@ class ObjectDetector:
             config = ObjectConfig(
                 object_id=obj['id'],
                 name=obj['name'],
-                color_lower=np.array(obj['color_lower']),
-                color_upper=np.array(obj['color_upper']),
-                color_name=obj.get('color_name', 'white'),
+                color_lower=np.array(obj.get('color_lower', [0, 0, 0])),
+                color_upper=np.array(obj.get('color_upper', [180, 255, 255])),
+                color_name=obj.get('color_name', 'yolo'),
                 min_area=obj.get('min_area', 3000),
-                color_bgr=self.color_map.get(obj.get('color_name', 'white'), (255, 255, 255))
+                color_bgr=self.color_map.get(obj.get('color_name', 'white'), (255, 255, 255)),
+                yolo_class=obj.get('yolo_class', ''),
             )
+            # If yolo_class not specified, infer from name
+            if not config.yolo_class:
+                name_lower = config.name.lower()
+                # Map common names to COCO class names
+                name_to_coco = {
+                    'phone': 'cell phone', 'cellphone': 'cell phone',
+                    'mobile': 'cell phone', 'smartphone': 'cell phone',
+                    'mouse': 'mouse', 'cup': 'cup', 'mug': 'cup',
+                    'bottle': 'bottle', 'laptop': 'laptop',
+                    'keyboard': 'keyboard', 'book': 'book',
+                    'remote': 'remote', 'scissors': 'scissors',
+                    'monitor': 'tv', 'screen': 'tv',
+                    'bowl': 'bowl', 'glass': 'wine glass',
+                    'plant': 'potted plant', 'plate': 'bowl',
+                }
+                config.yolo_class = name_to_coco.get(name_lower, name_lower)
+            
+            # Get color from YOLO class colors if available
+            if YOLO_AVAILABLE and config.yolo_class in CLASS_COLORS:
+                config.color_bgr = CLASS_COLORS[config.yolo_class]
+            
             self.object_configs[config.object_id] = config
             
             # Initialize detected object
@@ -114,6 +170,7 @@ class ObjectDetector:
                        marker_detector=None) -> Dict[str, DetectedObject]:
         """
         Detect all configured objects in the frame.
+        Uses YOLO first (if available), falls back to color/contour detection.
         
         Args:
             frame: BGR image
@@ -122,17 +179,43 @@ class ObjectDetector:
         Returns:
             Dictionary of detected objects
         """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # Run YOLO detection (with frame skipping for performance)
+        if self.yolo is not None:
+            self._frame_count += 1
+            if self._frame_count > self._yolo_skip_frames:
+                self._last_yolo_detections = self.yolo.detect(frame)
+                self._frame_count = 0
+            # else: reuse cached _last_yolo_detections
+        else:
+            self._last_yolo_detections = []
+        
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) if not self._last_yolo_detections else None
         
         for obj_id, config in self.object_configs.items():
-            # Use contour-based detection for 'any'/'dark' colors, color-based otherwise
-            if config.color_name in ('any', 'dark'):
-                detected_obj = self._detect_by_contour(frame, config, marker_detector)
-            else:
-                detected_obj = self._detect_single_object(hsv, frame, config, marker_detector)
+            detected_obj = None
+            
+            # Try YOLO detection first
+            if self._last_yolo_detections and config.yolo_class:
+                detected_obj = self._detect_by_yolo(config, marker_detector)
+            
+            # Fallback to color/contour detection if YOLO didn't find it
+            if detected_obj is None or not detected_obj.visible:
+                if hsv is None:
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    
+                if config.color_name in ('any', 'dark'):
+                    detected_obj = self._detect_by_contour(frame, config, marker_detector)
+                elif config.color_name != 'yolo':
+                    detected_obj = self._detect_single_object(hsv, frame, config, marker_detector)
+                else:
+                    # yolo-only mode, no fallback
+                    detected_obj = DetectedObject(
+                        object_id=config.object_id, name=config.name,
+                        color_bgr=config.color_bgr
+                    )
             
             # Update tracking
-            if detected_obj.visible:
+            if detected_obj and detected_obj.visible:
                 self.detected_objects[obj_id] = detected_obj
                 self.detected_objects[obj_id].frames_since_seen = 0
             else:
@@ -141,10 +224,87 @@ class ObjectDetector:
                 if self.detected_objects[obj_id].frames_since_seen > 30:
                     self.detected_objects[obj_id].status = ObjectStatus.NOT_DETECTED
         
-        # Also run general detection to find any objects
-        self.general_objects = self._detect_general_objects(frame, marker_detector)
+        # Build general objects list from ALL YOLO detections
+        self.general_objects = self._build_general_objects(marker_detector)
                     
         return self.detected_objects
+    
+    def _detect_by_yolo(self, config: ObjectConfig,
+                         marker_detector=None) -> Optional[DetectedObject]:
+        """
+        Find a configured object in the YOLO detection results.
+        
+        Args:
+            config: Object configuration with yolo_class set
+            marker_detector: Optional for coordinate transformation
+            
+        Returns:
+            DetectedObject if found, None otherwise
+        """
+        # Search through YOLO detections for matching class
+        target_class = config.yolo_class.lower()
+        best_match = None
+        
+        for det in self._last_yolo_detections:
+            if det['class_name'].lower() == target_class:
+                if best_match is None or det['confidence'] > best_match['confidence']:
+                    best_match = det
+        
+        if best_match is None:
+            return None
+        
+        x, y, w, h = best_match['bbox']
+        cx, cy = best_match['center']
+        
+        detected = DetectedObject(
+            object_id=config.object_id,
+            name=config.name,
+            center=(cx, cy),
+            bounding_box=(x, y, w, h),
+            visible=True,
+            status=ObjectStatus.DETECTED,
+            confidence=best_match['confidence'],
+            color_bgr=config.color_bgr,
+        )
+        
+        # Convert to table coordinates if marker detector available
+        if marker_detector and marker_detector.is_calibrated():
+            table_pos = marker_detector.screen_to_table((cx, cy))
+            if table_pos:
+                detected.table_position = table_pos
+        
+        return detected
+
+    def _build_general_objects(self, marker_detector=None) -> List[DetectedObject]:
+        """
+        Build general objects list from ALL YOLO detections.
+        These are shown to the user so they can see what the system recognizes.
+        """
+        results = []
+        
+        for i, det in enumerate(self._last_yolo_detections):
+            x, y, w, h = det['bbox']
+            cx, cy = det['center']
+            
+            obj = DetectedObject(
+                object_id=f"yolo_{i}",
+                name=det['display_name'],
+                center=(cx, cy),
+                bounding_box=(x, y, w, h),
+                visible=True,
+                status=ObjectStatus.DETECTED,
+                confidence=det['confidence'],
+                color_bgr=det['color_bgr'],
+            )
+            
+            if marker_detector and marker_detector.is_calibrated():
+                table_pos = marker_detector.screen_to_table((cx, cy))
+                if table_pos:
+                    obj.table_position = table_pos
+            
+            results.append(obj)
+        
+        return results
     
     def _detect_single_object(self, hsv: np.ndarray, frame: np.ndarray,
                                config: ObjectConfig, 
@@ -272,67 +432,6 @@ class ObjectDetector:
                         detected.table_position = table_pos
         
         return detected
-    
-    def _detect_general_objects(self, frame: np.ndarray,
-                                marker_detector=None) -> List[DetectedObject]:
-        """
-        Detect any prominent objects in the frame using contour detection.
-        Returns a list of generic detected objects (not tied to procedure steps).
-        Useful for showing the user what the system can 'see'.
-        """
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (9, 9), 0)
-        
-        # Adaptive threshold
-        thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                        cv2.THRESH_BINARY_INV, 31, 10)
-        
-        kernel = np.ones((5, 5), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-        
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        results = []
-        min_area = 2000
-        
-        for i, c in enumerate(contours):
-            area = cv2.contourArea(c)
-            if area < min_area:
-                continue
-            x, y, w, h = cv2.boundingRect(c)
-            aspect = max(w, h) / (min(w, h) + 1)
-            if aspect > 6:
-                continue
-            
-            M = cv2.moments(c)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-            else:
-                cx, cy = x + w // 2, y + h // 2
-            
-            obj = DetectedObject(
-                object_id=f"general_{i}",
-                name=f"Object",
-                center=(cx, cy),
-                bounding_box=(x, y, w, h),
-                visible=True,
-                status=ObjectStatus.DETECTED,
-                confidence=min(area / (min_area * 5), 1.0),
-                color_bgr=(200, 200, 0)  # Cyan-ish for general objects
-            )
-            
-            if marker_detector and marker_detector.is_calibrated():
-                table_pos = marker_detector.screen_to_table((cx, cy))
-                if table_pos:
-                    obj.table_position = table_pos
-            
-            results.append(obj)
-        
-        # Sort by area (largest first), limit to top 10
-        results.sort(key=lambda o: o.bounding_box[2] * o.bounding_box[3], reverse=True)
-        return results[:10]
     
     def get_object(self, object_id: str) -> Optional[DetectedObject]:
         """Get a specific detected object by ID."""
