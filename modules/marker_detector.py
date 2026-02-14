@@ -1,14 +1,24 @@
 """
 Marker Detection Module
 =======================
-Handles ArUco marker detection for table boundary tracking and homography computation.
-Uses 4x4 dictionary markers placed at table corners.
+Detects ArUco markers at the four table corners and computes homography.
 
-Corner marker IDs:
+Design choices:
+- Using ArUco 4x4_50 dictionary -- small markers, fast to detect, and the
+  assignment recommends fiducial markers for defining a coordinate system.
+- The homography maps any screen pixel to normalized table coords (0-1),
+  which is how we check if an object reached its target zone regardless
+  of camera angle or distance.
+- If markers aren't available (user presses SPACE to skip), the system
+  falls back to screen-relative coordinates (camera frame = workspace).
+
+Corner marker IDs (print from markers/ folder):
 - ID 0: Top-Left
-- ID 1: Top-Right  
+- ID 1: Top-Right
 - ID 2: Bottom-Right
 - ID 3: Bottom-Left
+
+Author: Ruijie Zheng
 """
 
 import cv2

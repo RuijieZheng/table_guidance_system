@@ -1,12 +1,20 @@
 """
 Visualization Module
 ====================
-Handles all AR overlay rendering including:
-- Table boundary visualization
-- Target zones with perspective warping
-- Guidance arrows
-- Status overlays
-- Completion feedback
+Renders all AR overlays on the camera feed.
+
+Design choices:
+- Target zones are drawn using perspective warping (via homography) so they
+  look like they're on the table surface rather than flat on screen.
+  This is the 'bonus' visualization the assignment recommends.
+- When markers aren't available, I fall back to simple 2D circles/boxes
+  at screen-relative positions.
+- The guidance arrow connects detected object center to target zone center,
+  giving the user clear directional feedback.
+- Status overlay shows current step, detection states, and feedback messages
+  ('Great Job!' on step completion, 'Table Set Successfully!' at the end).
+
+Author: Ruijie Zheng
 """
 
 import cv2
@@ -84,6 +92,10 @@ class Visualizer:
         output = frame.copy()
         status = state_manager.status
         h, w = frame.shape[:2]
+        
+        # Layers are drawn in order: background first, UI overlay last.
+        # This avoids cluttered overlaps -- e.g. the guidance arrow stays
+        # on top of the target zone fills.
         
         # Layer 1: Table boundary
         if use_markers:

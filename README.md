@@ -192,7 +192,8 @@ The procedure is defined in `config/procedure.json`:
 | opencv-python | ≥4.5 | Image processing, visualization |
 | opencv-contrib-python | ≥4.5 | ArUco marker detection |
 | numpy | ≥1.19 | Numerical operations |
-| mediapipe | ≥0.10.30 | Hand tracking (Tasks API) || onnxruntime | ≥1.16 | YOLO model inference (no PyTorch needed) |
+| mediapipe | ≥0.10.30 | Hand tracking (Tasks API) |
+| onnxruntime | ≥1.16 | YOLO model inference (no PyTorch needed) |
 ## Project Structure
 
 ```

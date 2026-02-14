@@ -1,25 +1,27 @@
 """
 Table Guidance System - Main Application
 =========================================
-A Physical Task Guidance System that uses AR overlays to guide users
-in organizing objects on a table into specific positions.
+Entry point for the physical task guidance system.
 
-Features:
-- ArUco marker-based table boundary detection with homography
-- Color-based object detection (Cup, Bottle, Plate)
-- Hand tracking for interaction detection
-- Perspective-warped target zone visualization
-- Real-time guidance arrows and status feedback
-- Step-by-step procedure management
+This ties together all five modules (marker detection, object detection,
+hand tracking, state management, visualization) into a single pipeline:
+  camera frame -> perception -> state update -> render overlays -> display
+
+Design choice: I separated the pipeline into distinct modules so each
+can be tested/swapped independently. The main loop just orchestrates them.
+
+I made ArUco markers optional (press SPACE to skip) because not everyone
+has a printer handy, and screen-relative mode still demonstrates the core
+pipeline well enough for a demo.
 
 Controls:
-- SPACE: Start the procedure
+- SPACE: Start the procedure / skip calibration
 - R: Reset and start over
-- Q: Quit the application
+- Q or ESC: Quit
+- D: Toggle debug info
 - C: Open color calibration tool
-- D: Toggle debug mode
 
-Author: [Your Name]
+Author: Ruijie Zheng
 Date: February 2026
 """
 
@@ -193,6 +195,9 @@ class TableGuidanceSystem:
         """
         h, w = frame.shape[:2]
         
+        # --- Core pipeline: perception -> state -> render ---
+        # This is the heart of the system. Each step feeds the next.
+        
         # 1. Detect table boundary (only if using markers)
         table_visible = False
         missing_markers = []
@@ -202,7 +207,8 @@ class TableGuidanceSystem:
         
         # 2. Detect objects
         # Pass marker_detector only if using markers and calibrated
-        md = self.marker_detector if (self.use_markers and self.marker_detector.is_calibrated()) else None
+        md = No-marker mode: treat the whole camera view as the workspace.
+        #    Just normalize pixel coords to 0-1. Simpler but less precise.rated()) else None
         detected_objects = self.object_detector.detect_objects(frame, md)
         
         # 3. In no-marker mode, convert screen coords to normalized (0-1) "table" coords
@@ -252,7 +258,9 @@ class TableGuidanceSystem:
             hand_pos,
             use_markers=self.use_markers
         )
-        
+        general objects with labeled bounding boxes.
+        # This shows ALL objects YOLO sees, not just the ones in our procedure --
+        # makes the demo more impressive and proves the detection actually works.
         # 7.5 Draw YOLO-detected objects with their actual names
         for gen_obj in self.object_detector.general_objects:
             if gen_obj.visible:

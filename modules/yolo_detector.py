@@ -1,11 +1,19 @@
 """
 YOLO Object Detector Module
 ============================
-Uses YOLOv5s ONNX model with ONNX Runtime for real-time object detection.
-Recognizes 80 COCO classes including common desk objects:
-  cup, bottle, cell phone, mouse, keyboard, laptop, book, scissors, etc.
+Handles object identification using a YOLOv5s model exported to ONNX format.
 
-This module replaces contour-based detection with actual object identification.
+Design choices:
+- I picked YOLOv5s (not v8) because it has an official ONNX export on GitHub
+  that can be downloaded directly, no PyTorch needed at runtime.
+- Using ONNX Runtime (CPU only) keeps the dependency footprint small
+  and avoids GPU/CUDA version headaches on different machines.
+- The model recognizes 80 COCO classes which covers common desk objects
+  (cup, bottle, cell phone, mouse, keyboard, laptop, etc.)
+- I added frame-skipping in object_detector.py so YOLO doesn't run every
+  frame -- would be too slow on CPU otherwise (~200ms per inference).
+
+Author: Ruijie Zheng
 """
 
 import cv2
@@ -99,6 +107,8 @@ class YOLODetector:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             model_path = os.path.join(base_dir, "models", "yolov5s.onnx")
 
+        # Graceful fallback: if the model file is missing, just print instructions
+        # instead of crashing. The rest of the system can still use color detection.
         if os.path.exists(model_path):
             self._load_model(model_path)
         else:
@@ -107,9 +117,10 @@ class YOLODetector:
             print(f"  curl -L -o models/yolov5s.onnx https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.onnx")
 
     def _load_model(self, model_path: str):
-        """Load the ONNX model."""
+        """Load the ONNX model into an inference session."""
         try:
-            # Use CPU provider (works everywhere)
+            # CPU-only on purpose -- GPU providers (CUDA/DirectML) cause version
+            # compatibility nightmares and the model is small enough for real-time CPU
             self.session = ort.InferenceSession(
                 model_path,
                 providers=['CPUExecutionProvider']

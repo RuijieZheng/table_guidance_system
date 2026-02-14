@@ -1,8 +1,19 @@
 """
 State Management Module
 =======================
-Manages procedure progress, step states, and completion tracking.
-Implements a state machine for the table organization task.
+Implements the FSM (finite state machine) that tracks procedure progress.
+
+Design choices:
+- The procedure flows: CALIBRATING -> INITIALIZING -> IN_PROGRESS -> COMPLETED
+- Each step has its own state: PENDING / ACTIVE / IN_PROGRESS / COMPLETED
+- Step completion is checked by Euclidean distance between the object's
+  normalized table position and the target zone center. If distance < radius,
+  the step is marked complete. Simple but works well.
+- The state manager is decoupled from detection -- it just receives position
+  data and makes state transition decisions. This makes it easy to swap out
+  the detection backend without touching the procedure logic.
+
+Author: Ruijie Zheng
 """
 
 import json
@@ -145,8 +156,10 @@ class StateManager:
         self.procedure_start_time: Optional[float] = None
         self.procedure_end_time: Optional[float] = None
         
-        # Tolerances
-        self.placement_tolerance = 0.02  # Extra tolerance for target zone
+        # How close an object needs to be to the target zone center to count as
+        # "placed". A bit of tolerance is needed since the detection bbox center
+        # won't be exactly at the physical center of the object on the table.
+        self.placement_tolerance = 0.02
         self.hold_time_required = 0.5  # Seconds to hold in position
         self._in_zone_start_time: Optional[float] = None
         

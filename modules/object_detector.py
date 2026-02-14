@@ -1,12 +1,20 @@
 """
 Object Detection Module
 =======================
-Detects and tracks objects using:
-  1. YOLO (primary) - identifies objects by name (cup, phone, mouse, etc.)
-  2. Color-based segmentation (fallback) - detects by HSV color range
-  3. Contour-based detection (fallback) - detects dark/any objects by shape
+Coordinates object detection across multiple strategies:
+  1. YOLO (primary) - identifies objects by class name (best accuracy)
+  2. Color-based HSV segmentation (fallback for when YOLO isn't available)
+  3. Contour-based detection (fallback for dark objects on light backgrounds)
 
-The YOLO detector uses a YOLOv5s ONNX model (80 COCO classes).
+Design rationale:
+- YOLO is primary because it can actually tell a phone from a mouse
+  (which color/contour methods cannot do reliably).
+- I kept color detection as fallback so the system still works even if
+  the YOLO model file is missing or onnxruntime isn't installed.
+- Each object in procedure.json specifies whether to use YOLO (yolo_class)
+  or color detection (color_name + HSV range).
+
+Author: Ruijie Zheng
 """
 
 import cv2
@@ -100,9 +108,11 @@ class ObjectDetector:
         # Cache YOLO detections to avoid running twice per frame
         self._last_yolo_detections: List[Dict] = []
         
-        # Frame skip for YOLO (run every N frames for performance)
+        # Frame skip for YOLO -- running inference every single frame is way too
+        # slow on CPU (~200ms). Skipping 2 frames means we still get ~10 updates/sec
+        # at 30fps which is plenty for tracking objects that don't move fast.
         self._frame_count = 0
-        self._yolo_skip_frames = 2  # Run YOLO every 3rd frame (0, 3, 6, ...)
+        self._yolo_skip_frames = 2
         
         # General detection results (all YOLO-detected objects)
         self.general_objects: List[DetectedObject] = []
@@ -189,6 +199,8 @@ class ObjectDetector:
         else:
             self._last_yolo_detections = []
         
+        # Only compute HSV if we actually need color-based detection
+        # (avoids wasted work when YOLO found everything)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) if not self._last_yolo_detections else None
         
         for obj_id, config in self.object_configs.items():

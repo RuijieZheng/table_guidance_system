@@ -1,10 +1,19 @@
 """
 Hand Tracking Module
 ====================
-Uses MediaPipe Tasks API to track hand position and detect interactions with objects.
-Determines if user is moving objects based on hand proximity and motion.
+Tracks hand position using MediaPipe to detect user-object interactions.
 
-Compatible with MediaPipe 0.10.30+ (Tasks API)
+Design choices:
+- Using the MediaPipe Tasks API (not legacy mp.solutions.hands) because
+  the legacy API was removed in newer versions (0.10.30+).
+- The hand_landmarker.task model is loaded from models/ folder.
+- Hand state is classified into OPEN/POINTING/PINCHING/GRABBING based
+  on finger landmark distances -- this helps determine if the user is
+  actively interacting with (picking up / moving) an object.
+- Hand tracking is a bonus feature for the assignment but adds a lot
+  to the demo since you can see the skeleton overlay in real time.
+
+Author: Ruijie Zheng
 """
 
 import cv2
@@ -15,6 +24,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 # Try to import MediaPipe Tasks API
+# NOTE: The old mp.solutions.hands API was removed in MediaPipe 0.10.30+
+# so we MUST use the Tasks API (HandLandmarker). If MediaPipe isn't installed,
+# hand tracking is just disabled gracefully -- the rest of the system still works.
 HAS_MEDIAPIPE = False
 mp = None
 
@@ -98,10 +110,13 @@ class HandTracker:
         self._prev_palm_pos: Optional[Tuple[int, int]] = None
         self._velocity_smoothing = 0.3
         
-        # Thresholds
-        self.pinch_threshold = 0.06  # Normalized distance
+        # These thresholds were tuned by trial and error while testing with my webcam.
+        # pinch_threshold: how close thumb+index need to be (normalized 0-1 space)
+        # grab_threshold: slightly larger -- all fingers curled = grabbing
+        # movement_threshold: how many px/frame before we consider "moving"
+        self.pinch_threshold = 0.06
         self.grab_threshold = 0.08
-        self.movement_threshold = 5.0  # Pixels per frame
+        self.movement_threshold = 5.0
         
         # Proximity detection
         self.proximity_radius = 80  # Pixels
