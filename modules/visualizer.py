@@ -52,7 +52,7 @@ class VisualizationConfig:
     font_thickness: int = 2
     
     # Animation
-    pulse_speed: float = 2.0  # Hz
+    pulse_speed: float = 2.0  # controls how fast the active zone blinks
     
 
 class Visualizer:
@@ -74,20 +74,7 @@ class Visualizer:
                detected_objects: Dict[str, DetectedObject],
                hand_position: Optional[Tuple[int, int]] = None,
                use_markers: bool = True) -> np.ndarray:
-        """
-        Render all visualizations on the frame.
-        
-        Args:
-            frame: BGR image to draw on
-            marker_detector: For coordinate transformation
-            state_manager: Current procedure state
-            detected_objects: Dict of detected objects
-            hand_position: Optional hand position in screen coords
-            use_markers: Whether markers are being used
-            
-        Returns:
-            Frame with all overlays rendered
-        """
+        """Main render call -- draws all AR overlays on the camera frame."""
         self.frame_count += 1
         output = frame.copy()
         status = state_manager.status
@@ -517,7 +504,7 @@ class Visualizer:
     def _draw_status_overlay(self, frame: np.ndarray,
                               status: SystemStatus,
                               state_manager: StateManager) -> np.ndarray:
-        """Draw status information overlay."""
+        """Top bar + bottom indicators + progress bar. This is the main HUD."""
         output = frame.copy()
         h, w = output.shape[:2]
         
@@ -623,7 +610,7 @@ class Visualizer:
         output = frame.copy()
         h, w = output.shape[:2]
         
-        # Rainbow border effect
+        # Rainbow border -- kind of cheesy but looks fun in the demo
         border_colors = [
             (0, 0, 255), (0, 127, 255), (0, 255, 255),
             (0, 255, 0), (255, 0, 0), (255, 0, 127)

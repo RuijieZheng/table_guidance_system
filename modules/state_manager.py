@@ -160,7 +160,8 @@ class StateManager:
         # "placed". A bit of tolerance is needed since the detection bbox center
         # won't be exactly at the physical center of the object on the table.
         self.placement_tolerance = 0.02
-        self.hold_time_required = 0.5  # Seconds to hold in position
+        self.hold_time_required = 0.5  # seconds to hold object in zone before it counts
+        # ^ without this, objects that briefly pass through a zone would trigger completion
         self._in_zone_start_time: Optional[float] = None
         
         # Callbacks
@@ -262,15 +263,7 @@ class StateManager:
                object_positions: Dict[str, Optional[Tuple[float, float]]],
                hand_near_object: bool = False,
                missing_markers: List[str] = None):
-        """
-        Update state based on current detections.
-        
-        Args:
-            table_visible: Whether table boundary is detected
-            object_positions: Dict of object_id -> (x, y) in table coordinates
-            hand_near_object: Whether hand is near the current target object
-            missing_markers: List of missing marker names
-        """
+        """Feed in the latest detection data and update FSM state."""
         self.status.table_visible = table_visible
         self.status.missing_markers = missing_markers or []
         self.status.markers_detected = 4 - len(self.status.missing_markers)

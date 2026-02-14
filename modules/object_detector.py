@@ -74,19 +74,13 @@ class ObjectConfig:
     color_name: str
     min_area: int = 3000
     color_bgr: Tuple[int, int, int] = field(default_factory=lambda: (255, 255, 255))
-    # YOLO class name to match (e.g., "cell phone", "cup", "mouse")
+    # YOLO class name to match (e.g., "cell phone", "bottle")
+    # leave empty for color-only detection
     yolo_class: str = ""
 
 
 class ObjectDetector:
-    """
-    Detects objects using YOLO (primary) or color-based segmentation (fallback).
-    
-    Detection priority:
-      1. YOLO model identifies objects by class name (cell phone, mouse, cup, etc.)
-      2. Color-based HSV detection (when color_name is set and YOLO not available)
-      3. Contour-based detection (for 'dark'/'any' color_name)
-    """
+    """Detects objects using YOLO first, falls back to color/contour if needed."""
     
     def __init__(self, objects_config: List[Dict] = None):
         """
@@ -178,17 +172,7 @@ class ObjectDetector:
     
     def detect_objects(self, frame: np.ndarray, 
                        marker_detector=None) -> Dict[str, DetectedObject]:
-        """
-        Detect all configured objects in the frame.
-        Uses YOLO first (if available), falls back to color/contour detection.
-        
-        Args:
-            frame: BGR image
-            marker_detector: Optional MarkerDetector for coordinate transformation
-            
-        Returns:
-            Dictionary of detected objects
-        """
+        """Main detection loop -- tries YOLO, then color, then contour for each object."""
         # Run YOLO detection (with frame skipping for performance)
         if self.yolo is not None:
             self._frame_count += 1
@@ -243,16 +227,7 @@ class ObjectDetector:
     
     def _detect_by_yolo(self, config: ObjectConfig,
                          marker_detector=None) -> Optional[DetectedObject]:
-        """
-        Find a configured object in the YOLO detection results.
-        
-        Args:
-            config: Object configuration with yolo_class set
-            marker_detector: Optional for coordinate transformation
-            
-        Returns:
-            DetectedObject if found, None otherwise
-        """
+        """Match a configured object against YOLO results by class name."""
         # Search through YOLO detections for matching class
         target_class = config.yolo_class.lower()
         best_match = None
@@ -324,6 +299,7 @@ class ObjectDetector:
         """Detect a single object by color."""
         
         # Handle red color wrap-around in HSV
+        # (red sits at both ends of the hue wheel, 0 and 180, so need two ranges)
         if config.color_name == 'red':
             # Red wraps around 0/180 in HSV
             mask1 = cv2.inRange(hsv, config.color_lower, config.color_upper)

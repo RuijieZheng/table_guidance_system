@@ -79,7 +79,8 @@ class HandInfo:
 class HandTracker:
     """Tracks hand position and gestures using MediaPipe Tasks API."""
     
-    # Hand landmark indices
+    # Landmark indices -- see MediaPipe hand model docs for the full diagram
+    # https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
     WRIST = 0
     THUMB_TIP = 4
     INDEX_MCP = 5
@@ -166,16 +167,7 @@ class HandTracker:
     
     def process_frame(self, frame: np.ndarray, 
                       marker_detector=None) -> HandInfo:
-        """
-        Process a frame and update hand tracking.
-        
-        Args:
-            frame: BGR image from camera
-            marker_detector: Optional MarkerDetector for coordinate transformation
-            
-        Returns:
-            HandInfo with current hand state
-        """
+        """Run hand detection on a frame and return updated HandInfo."""
         if not self.enabled or self.landmarker is None:
             return HandInfo()
             
@@ -197,7 +189,8 @@ class HandTracker:
         self.hand_info = HandInfo()
         
         if result.hand_landmarks and len(result.hand_landmarks) > 0:
-            # Track the first hand
+            # Track first hand only for now
+            # TODO: maybe support two-handed interaction later?
             landmarks = result.hand_landmarks[0]
             self.hand_info.detected = True
             
@@ -301,16 +294,7 @@ class HandTracker:
         return HandState.OPEN
     
     def is_near_point(self, point: Tuple[int, int], radius: int = None) -> bool:
-        """
-        Check if hand (palm center) is near a given point.
-        
-        Args:
-            point: (x, y) screen coordinates
-            radius: Optional custom radius (default: self.proximity_radius)
-            
-        Returns:
-            True if hand is within radius of point
-        """
+        """Check if palm center is close enough to a screen point."""
         if not self.hand_info.detected:
             return False
             
@@ -325,16 +309,7 @@ class HandTracker:
     
     def is_interacting_with_object(self, object_center: Tuple[int, int],
                                     object_size: Tuple[int, int] = (100, 100)) -> bool:
-        """
-        Check if hand is interacting with an object (near and in grabbing/pinching state).
-        
-        Args:
-            object_center: (x, y) center of object
-            object_size: (width, height) of object
-            
-        Returns:
-            True if hand appears to be interacting with the object
-        """
+        """True if hand is near the object AND in a grab/pinch state."""
         if not self.hand_info.detected:
             return False
             
@@ -358,16 +333,7 @@ class HandTracker:
     ]
     
     def draw_debug(self, frame: np.ndarray, draw_landmarks: bool = True) -> np.ndarray:
-        """
-        Draw hand tracking debug visualization.
-        
-        Args:
-            frame: BGR image to draw on
-            draw_landmarks: Whether to draw full hand landmarks
-            
-        Returns:
-            Frame with debug visualization
-        """
+        """Draw hand skeleton + state label on frame."""
         if not self.enabled:
             return frame
             

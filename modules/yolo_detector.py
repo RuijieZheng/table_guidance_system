@@ -38,7 +38,8 @@ COCO_CLASSES = [
     "hair drier", "toothbrush"
 ]
 
-# Map common COCO class names to user-friendly display names
+# Map common COCO class names to shorter display names
+# (COCO uses weirdly verbose names sometimes)
 DISPLAY_NAMES = {
     "cell phone": "Phone",
     "mouse": "Mouse",
@@ -79,10 +80,7 @@ DEFAULT_COLOR = (200, 200, 200)     # Light gray
 
 
 class YOLODetector:
-    """
-    YOLO-based object detector using ONNX Runtime.
-    Detects and identifies common objects by name.
-    """
+    """Wraps YOLOv5s ONNX model for real-time object detection."""
 
     def __init__(self, model_path: str = None, confidence_threshold: float = 0.35,
                  nms_threshold: float = 0.45, input_size: int = 640):
@@ -142,21 +140,7 @@ class YOLODetector:
         return self.session is not None
 
     def detect(self, frame: np.ndarray) -> List[Dict]:
-        """
-        Detect objects in a frame.
-
-        Args:
-            frame: BGR image from camera
-
-        Returns:
-            List of detections, each with:
-                - 'class_name': COCO class name (e.g., 'cell phone')
-                - 'display_name': User-friendly name (e.g., 'Phone')
-                - 'confidence': Detection confidence (0-1)
-                - 'bbox': (x, y, w, h) bounding box in original image coords
-                - 'center': (cx, cy) center point in original image coords
-                - 'color_bgr': Suggested display color (BGR)
-        """
+        """Run detection on a single BGR frame. Returns list of detection dicts."""
         if not self.is_available:
             return []
 
@@ -179,14 +163,7 @@ class YOLODetector:
         return detections
 
     def _preprocess(self, frame: np.ndarray) -> Tuple[np.ndarray, float, Tuple[int, int]]:
-        """
-        Preprocess image for YOLO: letterbox resize + normalize.
-
-        Returns:
-            blob: (1, 3, 640, 640) normalized image
-            ratio: resize ratio
-            (dw, dh): padding offsets
-        """
+        """Letterbox resize to 640x640 + normalize to [0,1]."""
         h, w = frame.shape[:2]
         size = self.input_size
 
@@ -200,11 +177,12 @@ class YOLODetector:
         # Pad to square
         dw = (size - new_w) // 2
         dh = (size - new_h) // 2
+        # 114 is the standard YOLO gray fill for padding
         padded = np.full((size, size, 3), 114, dtype=np.uint8)
         padded[dh:dh + new_h, dw:dw + new_w] = resized
 
         # BGR -> RGB, HWC -> CHW, normalize to 0-1
-input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
+        input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
         input_blob = np.ascontiguousarray(input_blob, dtype=np.float32) / 255.0
         input_blob = input_blob[np.newaxis, ...]  # Add batch dimension
         
@@ -213,9 +191,7 @@ input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
     def _postprocess(self, predictions: np.ndarray,
                      orig_w: int, orig_h: int,
                      ratio: float, dw: int, dh: int) -> List[Dict]:
-        """
-        Post-process YOLO output: filter by confidence, apply NMS, scale boxes.
-        """
+        """Filter predictions by confidence, run NMS, scale boxes back to original coords."""
         # predictions shape: (1, 25200, 85)
         # Format: [cx, cy, w, h, obj_conf, cls0, cls1, ..., cls79]
         preds = predictions[0].astype(np.float32)  # (25200, 85)
@@ -262,7 +238,7 @@ input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
         boxes = np.array(boxes, dtype=np.float32)
         scores = max_scores.astype(np.float32)
 
-        # Apply NMS using OpenCV
+        # NMS via OpenCV -- returns indices differently depending on version which is annoying
         indices = cv2.dnn.NMSBoxes(
             boxes.tolist(), scores.tolist(),
             self.confidence_threshold, self.nms_threshold
@@ -300,17 +276,7 @@ input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
     def draw_detections(self, frame: np.ndarray,
                         detections: List[Dict],
                         draw_labels: bool = True) -> np.ndarray:
-        """
-        Draw YOLO detections on frame.
-
-        Args:
-            frame: BGR image
-            detections: List of detection dicts from detect()
-            draw_labels: Whether to draw class name + confidence
-
-        Returns:
-            Frame with bounding boxes and labels drawn
-        """
+        """Draw bounding boxes + labels on frame. Mostly used for debugging."""
         output = frame.copy()
 
         for det in detections:
@@ -335,17 +301,7 @@ input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
         return output
 
     def find_object(self, detections: List[Dict], target_name: str) -> Optional[Dict]:
-        """
-        Find a specific object type in the detections.
-
-        Args:
-            detections: List of detection dicts
-            target_name: Object name to search for (case-insensitive).
-                         Checks both COCO class_name and display_name.
-
-        Returns:
-            Best matching detection dict, or None
-        """
+        """Find best match for target_name in detections (case-insensitive)."""
         target_lower = target_name.lower()
         matches = []
         for det in detections:
@@ -359,12 +315,7 @@ input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
         return None
 
     def get_desk_objects(self, detections: List[Dict]) -> List[Dict]:
-        """
-        Filter detections to only include typical desk/table objects.
-
-        Returns:
-            Filtered list of detections
-        """
+        """Keep only desk-related objects (phone, cup, keyboard, etc)."""
         desk_classes = {
             'cup', 'bottle', 'wine glass', 'bowl', 'cell phone', 'mouse',
             'keyboard', 'laptop', 'remote', 'book', 'scissors', 'clock',

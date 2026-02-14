@@ -161,7 +161,7 @@ class TableGuidanceSystem:
                     print("Error: Failed to read frame")
                     break
                     
-                # Flip for mirror view
+                # Mirror the camera so it feels natural (like a selfie camera)
                 frame = cv2.flip(frame, 1)
                 
                 # Process frame
@@ -184,15 +184,7 @@ class TableGuidanceSystem:
             self.cleanup()
             
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Process a single frame through all modules.
-        
-        Args:
-            frame: BGR image from camera
-            
-        Returns:
-            Processed frame with visualizations
-        """
+        """Run one frame through the full pipeline: detect -> update state -> render."""
         h, w = frame.shape[:2]
         
         # --- Core pipeline: perception -> state -> render ---
@@ -207,8 +199,7 @@ class TableGuidanceSystem:
         
         # 2. Detect objects
         # Pass marker_detector only if using markers and calibrated
-        md = No-marker mode: treat the whole camera view as the workspace.
-        #    Just normalize pixel coords to 0-1. Simpler but less precise.rated()) else None
+        md = self.marker_detector if (self.use_markers and self.marker_detector.is_calibrated()) else None
         detected_objects = self.object_detector.detect_objects(frame, md)
         
         # 3. In no-marker mode, convert screen coords to normalized (0-1) "table" coords
@@ -258,7 +249,7 @@ class TableGuidanceSystem:
             hand_pos,
             use_markers=self.use_markers
         )
-        general objects with labeled bounding boxes.
+        # Show general YOLO detections (all objects YOLO sees) with labeled bounding boxes.
         # This shows ALL objects YOLO sees, not just the ones in our procedure --
         # makes the demo more impressive and proves the detection actually works.
         # 7.5 Draw YOLO-detected objects with their actual names
@@ -322,15 +313,7 @@ class TableGuidanceSystem:
         return output
         
     def handle_input(self, key: int) -> bool:
-        """
-        Handle keyboard input.
-        
-        Args:
-            key: Key code
-            
-        Returns:
-            True to continue, False to quit
-        """
+        """Process a keypress. Returns False if user wants to quit."""
         if key == ord('q') or key == 27:  # Q or ESC
             return False
             

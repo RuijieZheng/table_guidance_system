@@ -64,29 +64,13 @@ class MarkerDetector:
         self.table_height = 1.0
         
     def detect_markers(self, frame: np.ndarray) -> Tuple[List, List, List]:
-        """
-        Detect all ArUco markers in the frame.
-        
-        Args:
-            frame: BGR image from camera
-            
-        Returns:
-            Tuple of (corners, ids, rejected)
-        """
+        """Detect ArUco markers and return (corners, ids, rejected)."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejected = self.detector.detectMarkers(gray)
         return corners, ids, rejected
     
     def update_table_boundary(self, frame: np.ndarray) -> bool:
-        """
-        Update table boundary by detecting corner markers.
-        
-        Args:
-            frame: BGR image from camera
-            
-        Returns:
-            True if all 4 corners detected and homography computed
-        """
+        """Look for 4 corner markers and recompute homography if all found."""
         corners, ids, _ = self.detect_markers(frame)
         
         if ids is None:
@@ -141,15 +125,7 @@ class MarkerDetector:
         self.table_boundary = src_points.reshape((-1, 1, 2)).astype(np.int32)
         
     def screen_to_table(self, screen_point: Tuple[float, float]) -> Optional[Tuple[float, float]]:
-        """
-        Convert screen coordinates to normalized table coordinates.
-        
-        Args:
-            screen_point: (x, y) in screen/pixel coordinates
-            
-        Returns:
-            (x, y) in normalized table coordinates (0-1), or None if no homography
-        """
+        """Screen px -> normalized table coords (0-1). None if not calibrated."""
         if self.homography is None:
             return None
             
@@ -158,15 +134,7 @@ class MarkerDetector:
         return tuple(transformed[0][0])
     
     def table_to_screen(self, table_point: Tuple[float, float]) -> Optional[Tuple[int, int]]:
-        """
-        Convert normalized table coordinates to screen coordinates.
-        
-        Args:
-            table_point: (x, y) in normalized table coordinates (0-1)
-            
-        Returns:
-            (x, y) in screen/pixel coordinates, or None if no homography
-        """
+        """Normalized table coords -> screen px. None if not calibrated."""
         if self.inverse_homography is None:
             return None
             
