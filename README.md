@@ -139,10 +139,10 @@ python main.py --generate-markers   # Generate markers only
 ## Task Workflow
 
 1. **Calibration** (optional): System detects all 4 corner markers and computes table homography. Press SPACE to skip.
-2. **Initialization**: User places objects (phone, mouse, cup) randomly on the table
-3. **Task 1**: Move the Phone to the Center zone
-4. **Task 2**: Move the Mouse to the Top-Right zone
-5. **Task 3**: Move the Cup to the Top-Left zone
+2. **Initialization**: User places objects (phone, pen, bottle) randomly on the table
+3. **Task 1**: Move the Phone to the Center
+4. **Task 2**: Move the Pen to the Top-Right zone
+5. **Task 3**: Move the Bottle to the Top-Left zone
 6. **Completion**: "Table Set Successfully!" message displayed
 
 YOLO continuously identifies all visible objects on the desk (labeled with name + confidence).
@@ -156,11 +156,10 @@ The procedure is defined in `config/procedure.json`:
     "procedure_name": "Table Setting Task",
     "objects": [
         {
-            "id": "cup",
-            "name": "Cup",
-            "color_lower": [0, 100, 100],
-            "color_upper": [10, 255, 255],
-            "color_name": "red"
+            "id": "object_3",
+            "name": "Bottle",
+            "yolo_class": "bottle",
+            "color_name": "yolo"
         }
         // ... more objects
     ],

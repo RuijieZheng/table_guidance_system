@@ -163,12 +163,12 @@ class YOLODetector:
         orig_h, orig_w = frame.shape[:2]
 
         # Preprocess: letterbox resize to 640x640
-        blob, ratio, (dw, dh) = self._preprocess(frame)
+        input_blob, ratio, (dw, dh) = self._preprocess(frame)
 
-        # Run inference
+        # Run inference (cast to model dtype)
         dtype = np.float16 if self.use_fp16 else np.float32
-        blob = blob.astype(dtype)
-        outputs = self.session.run(None, {self.input_name: blob})
+        input_blob = input_blob.astype(dtype)
+        outputs = self.session.run(None, {self.input_name: input_blob})
         predictions = outputs[0]  # shape: (1, 25200, 85)
 
         # Postprocess: extract detections
@@ -204,11 +204,11 @@ class YOLODetector:
         padded[dh:dh + new_h, dw:dw + new_w] = resized
 
         # BGR -> RGB, HWC -> CHW, normalize to 0-1
-        blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
-        blob = np.ascontiguousarray(blob, dtype=np.float32) / 255.0
-        blob = blob[np.newaxis, ...]  # Add batch dimension
-
-        return blob, ratio, (dw, dh)
+input_blob = padded[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
+        input_blob = np.ascontiguousarray(input_blob, dtype=np.float32) / 255.0
+        input_blob = input_blob[np.newaxis, ...]  # Add batch dimension
+        
+        return input_blob, ratio, (dw, dh)
 
     def _postprocess(self, predictions: np.ndarray,
                      orig_w: int, orig_h: int,
