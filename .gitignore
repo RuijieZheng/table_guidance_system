@@ -27,7 +27,6 @@ models/
 *.onnx
 
 # Demo video (local)
-table_guidance_system.mp4
 
 # Local-only submission files (do not push)
 CONTRIBUTION.md
