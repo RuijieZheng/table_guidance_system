@@ -28,6 +28,8 @@ models/
 
 # Demo video (local)
 table_guidance_system.mp4
+# Local-only submission skeleton (do not push)
+SUBMISSION.md
 
 # Test files
 test_*.py
