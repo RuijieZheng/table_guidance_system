@@ -249,7 +249,14 @@ The system uses **YOLOv5s** (via ONNX Runtime) as the primary detection method:
 
 ## Demo Video
 
-[Link to demo video - to be recorded]
+Demo (Google Drive): https://drive.google.com/file/d/1AK7lB2fSblzjdCt8OvcA9mTn3GGU87ad/view?usp=drive_link
+
+Suggested timestamps:
+- 00:00–00:05 — Title + repo link
+- 00:06–00:12 — Calibration (or skip) and workspace setup
+- 00:13–00:35 — Steps 1–3: guidance arrow, object move, `In Zone` feedback
+- 00:36–00:45 — Hand interaction: `Hand Near Object` → `Holding: <object>`
+- 00:46–00:55 — Robustness demo (brief occlusion / recovery) + final success
 
 The video should demonstrate:
 1. Calibration phase (marker detection)
