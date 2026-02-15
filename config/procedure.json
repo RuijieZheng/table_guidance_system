@@ -12,9 +12,9 @@
         {
             "id": "object_2",
             "name": "Pen",
-            "yolo_class": "",
+            "yolo_class": "pen",
             "color_name": "dark",
-            "min_area": 800
+            "min_area": 500
         },
         {
             "id": "object_3",

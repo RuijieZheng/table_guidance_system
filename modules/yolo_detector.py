@@ -61,6 +61,18 @@ DISPLAY_NAMES = {
     "chair": "Chair",
     "dining table": "Table",
     "person": "Person",
+    "knife": "Knife",
+    "fork": "Fork",
+    "spoon": "Spoon",
+    "banana": "Banana",
+    "apple": "Apple",
+    "toothbrush": "Toothbrush",
+    "tie": "Tie",
+    "umbrella": "Umbrella",
+    "teddy bear": "Teddy Bear",
+    "sports ball": "Ball",
+    "frisbee": "Frisbee",
+    "suitcase": "Suitcase",
 }
 
 # Colors for different object classes (BGR)
@@ -75,8 +87,42 @@ CLASS_COLORS = {
     "remote": (200, 200, 0),        # Cyan
     "scissors": (128, 0, 255),      # Pink
     "person": (0, 255, 0),          # Green
+    "knife": (180, 180, 0),         # Teal
+    "fork": (100, 200, 150),        # Light green
+    "spoon": (150, 150, 200),       # Light lavender
+    "toothbrush": (50, 200, 200),   # Gold
+    "tie": (200, 100, 50),          # Dark cyan
+    "sports ball": (0, 200, 255),   # Orange-yellow
+    "teddy bear": (100, 100, 255),  # Salmon
 }
 DEFAULT_COLOR = (200, 200, 200)     # Light gray
+
+# Alias map: object names that aren't COCO classes -> list of COCO classes to try.
+# YOLO can't detect "pen" or "eraser" directly, but a pen sometimes gets picked
+# up as "knife" or "toothbrush", and cards as "book" or "cell phone", etc.
+# This lets users configure non-COCO objects that still get matched.
+CLASS_ALIASES = {
+    "pen":          ["knife", "toothbrush", "cell phone"],
+    "pencil":       ["knife", "toothbrush"],
+    "marker":       ["knife", "toothbrush"],
+    "eraser":       ["book", "cell phone", "remote", "mouse"],
+    "cards":        ["book", "cell phone"],
+    "card":         ["book", "cell phone"],
+    "deck":         ["book", "cell phone"],
+    "plate":        ["bowl", "frisbee", "clock"],
+    "glass":        ["wine glass", "cup"],
+    "mug":          ["cup"],
+    "charger":      ["cell phone", "mouse"],
+    "wallet":       ["book", "cell phone"],
+    "notebook":     ["book", "laptop"],
+    "stapler":      ["mouse", "remote"],
+    "tape":         ["sports ball", "clock"],
+    "headphones":   ["mouse", "cell phone"],
+    "earbuds":      ["mouse", "cell phone"],
+    "usb":          ["remote", "cell phone"],
+    "calculator":   ["cell phone", "remote"],
+    "ruler":        ["knife", "remote"],
+}
 
 
 class YOLODetector:

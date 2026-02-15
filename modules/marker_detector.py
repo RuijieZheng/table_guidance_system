@@ -47,6 +47,28 @@ class MarkerDetector:
         """
         self.dictionary = aruco.getPredefinedDictionary(dictionary_type)
         self.parameters = aruco.DetectorParameters()
+        
+        # Tune detection for phone-displayed markers (screen glare, moiré, lower contrast)
+        # Smaller adaptive window helps with uneven screen lighting
+        self.parameters.adaptiveThreshWinSizeMin = 3
+        self.parameters.adaptiveThreshWinSizeMax = 23
+        self.parameters.adaptiveThreshWinSizeStep = 4
+        # Lower threshold to catch lower-contrast markers on screens
+        self.parameters.adaptiveThreshConstant = 7
+        # Relax corner quality requirements for screen-captured markers
+        self.parameters.minMarkerPerimeterRate = 0.02
+        self.parameters.maxMarkerPerimeterRate = 4.0
+        self.parameters.polygonalApproxAccuracyRate = 0.05
+        # More permissive bit extraction for screen reflections
+        self.parameters.perspectiveRemoveIgnoredMarginPerCell = 0.2
+        self.parameters.maxErroneousBitsInBorderRate = 0.5
+        self.parameters.errorCorrectionRate = 0.6
+        # Corner refinement for better homography accuracy
+        self.parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+        self.parameters.cornerRefinementWinSize = 5
+        self.parameters.cornerRefinementMaxIterations = 30
+        self.parameters.cornerRefinementMinAccuracy = 0.1
+        
         self.detector = aruco.ArucoDetector(self.dictionary, self.parameters)
         
         # Homography matrix (screen -> table normalized coords)
@@ -59,14 +81,86 @@ class MarkerDetector:
         # Table boundary polygon (screen coordinates)
         self.table_boundary: Optional[np.ndarray] = None
         
+        # Debug info from last detection
+        self._last_corners = []
+        self._last_ids = None
+        self._last_rejected = []
+        
         # Virtual table dimensions (normalized 0-1)
         self.table_width = 1.0
         self.table_height = 1.0
+    
+    def reset(self):
+        """Clear calibration so the user can re-define the working region."""
+        self.homography = None
+        self.inverse_homography = None
+        self.corner_positions = {}
+        self.table_boundary = None
+        # Debug info from last detection
+        self._last_corners = []
+        self._last_ids = None
+        self._last_rejected = []
         
     def detect_markers(self, frame: np.ndarray) -> Tuple[List, List, List]:
-        """Detect ArUco markers and return (corners, ids, rejected)."""
+        """Detect ArUco markers, handling possible horizontal flip.
+        
+        Tries detection on both the raw frame AND a horizontally-flipped
+        copy, since we don't know if the camera or code has already
+        mirrored the image.  Picks whichever orientation finds more
+        markers and remaps coordinates to the input frame.
+        """
+        h, w = frame.shape[:2]
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejected = self.detector.detectMarkers(gray)
+        gray_flipped = cv2.flip(gray, 1)
+        
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        
+        # Try all 4 combos: (original | flipped) × (raw | CLAHE)
+        attempts = [
+            (gray,                  False),  # as-is, raw
+            (clahe.apply(gray),     False),  # as-is, CLAHE
+            (gray_flipped,          True),   # flipped, raw
+            (clahe.apply(gray_flipped), True),  # flipped, CLAHE
+        ]
+        
+        best_corners, best_ids, best_rejected = [], None, []
+        best_count = 0
+        best_was_flipped = False
+        
+        for img, was_flipped in attempts:
+            c, i, r = self.detector.detectMarkers(img)
+            count = 0 if i is None else len(i)
+            if count > best_count:
+                best_corners, best_ids, best_rejected = c, i, r
+                best_count = count
+                best_was_flipped = was_flipped
+        
+        corners, ids, rejected = best_corners, best_ids, best_rejected
+        
+        # If we detected on the flipped image, remap coords back
+        if best_was_flipped and corners is not None and len(corners) > 0:
+            corners = self._flip_corner_coords(corners, w)
+        if best_was_flipped and rejected is not None and len(rejected) > 0:
+            rejected = self._flip_corner_coords(rejected, w)
+        
+        # Store for debug drawing
+        self._last_corners = corners if corners is not None else []
+        self._last_ids = ids
+        self._last_rejected = rejected if rejected is not None else []
+        
+        return corners, ids, rejected
+    
+    @staticmethod
+    def _flip_corner_coords(corner_list, frame_width: int):
+        """Mirror x-coordinates of detected corners back to the original frame."""
+        flipped = []
+        for c in corner_list:
+            fc = c.copy()
+            fc[:, :, 0] = frame_width - 1 - fc[:, :, 0]
+            flipped.append(fc)
+        return flipped
+        self._last_rejected = rejected
+        
         return corners, ids, rejected
     
     def update_table_boundary(self, frame: np.ndarray) -> bool:
@@ -203,6 +297,90 @@ class MarkerDetector:
                            0.6, (255, 255, 0), 2)
                            
         return output
+    
+    def draw_calibration_feedback(self, frame: np.ndarray) -> np.ndarray:
+        """Draw live marker detection feedback during calibration.
+        
+        Shows detected markers (green), rejected candidates (red outline),
+        and a status bar so the user can see what the detector finds.
+        """
+        output = frame.copy()
+        
+        corners = self._last_corners
+        ids = self._last_ids
+        rejected = self._last_rejected
+        
+        # Draw detected markers with green border + ID label
+        if ids is not None and len(corners) > 0:
+            aruco.drawDetectedMarkers(output, corners, ids)
+        
+        # Draw rejected candidates as small red outlines
+        if rejected is not None:
+            for rej in rejected:
+                pts = rej.reshape((-1, 1, 2)).astype(np.int32)
+                cv2.polylines(output, [pts], True, (0, 0, 180), 1)
+        
+        # Status bar at top showing detection results
+        h, w = output.shape[:2]
+        n_detected = 0 if ids is None else len(ids)
+        n_rejected = 0 if rejected is None else len(rejected)
+        
+        # Which IDs were found?
+        found_ids = []
+        if ids is not None:
+            found_ids = sorted(ids.flatten().tolist())
+        
+        id_map = {0: 'TL', 1: 'TR', 2: 'BR', 3: 'BL'}
+        found_str = ", ".join(f"ID{i}({id_map.get(i, '?')})" for i in found_ids)
+        missing = [f"ID{mid}({id_map[mid]})" for mid in sorted(self.CORNER_IDS.values())
+                   if mid not in found_ids]
+        
+        # Draw status panel
+        panel_h = 75
+        overlay = output.copy()
+        cv2.rectangle(overlay, (0, 0), (w, panel_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, output, 0.3, 0, output)
+        
+        # Line 1: detection count
+        color = (0, 255, 0) if n_detected == 4 else (0, 200, 255)
+        cv2.putText(output, f"Markers: {n_detected}/4 detected  |  {n_rejected} candidates rejected",
+                    (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        
+        # Line 2: found IDs
+        if found_str:
+            cv2.putText(output, f"Found: {found_str}",
+                        (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 0), 1)
+        
+        # Line 3: missing IDs
+        if missing:
+            miss_str = ", ".join(missing)
+            cv2.putText(output, f"Missing: {miss_str}",
+                        (10, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 100, 255), 1)
+        elif n_detected >= 4:
+            cv2.putText(output, "All 4 found! Press SPACE to confirm.",
+                        (10, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+        
+        return output
+    
+    def get_marker_rects(self) -> List[Tuple[int, int, int, int]]:
+        """Return bounding rectangles (x, y, w, h) of last detected markers.
+        
+        Useful for filtering out YOLO detections that overlap with markers.
+        """
+        rects = []
+        if self._last_ids is not None and len(self._last_corners) > 0:
+            for c in self._last_corners:
+                pts = c[0]  # shape (4,2)
+                x_min = int(pts[:, 0].min())
+                y_min = int(pts[:, 1].min())
+                x_max = int(pts[:, 0].max())
+                y_max = int(pts[:, 1].max())
+                # Add some margin
+                margin = max(x_max - x_min, y_max - y_min) // 4
+                rects.append((x_min - margin, y_min - margin,
+                              x_max - x_min + 2 * margin,
+                              y_max - y_min + 2 * margin))
+        return rects
 
 
 def generate_corner_markers(output_dir: str, marker_size: int = 600):

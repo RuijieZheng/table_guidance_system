@@ -25,7 +25,7 @@ from enum import Enum
 
 # Import YOLO detector
 try:
-    from .yolo_detector import YOLODetector, DISPLAY_NAMES, CLASS_COLORS
+    from .yolo_detector import YOLODetector, DISPLAY_NAMES, CLASS_COLORS, CLASS_ALIASES, COCO_CLASSES
     YOLO_AVAILABLE = True
 except ImportError:
     YOLO_AVAILABLE = False
@@ -95,7 +95,8 @@ class ObjectDetector:
         # Initialize YOLO detector
         self.yolo: Optional[YOLODetector] = None
         if YOLO_AVAILABLE:
-            self.yolo = YOLODetector(confidence_threshold=0.3)
+            # Slightly lower than default 0.35 for better phone/bottle detection
+            self.yolo = YOLODetector(confidence_threshold=0.30)
             if not self.yolo.is_available:
                 self.yolo = None
                 
@@ -154,6 +155,11 @@ class ObjectDetector:
                     'monitor': 'tv', 'screen': 'tv',
                     'bowl': 'bowl', 'glass': 'wine glass',
                     'plant': 'potted plant', 'plate': 'bowl',
+                    'pen': 'pen', 'pencil': 'pencil', 'marker': 'marker',
+                    'eraser': 'eraser', 'cards': 'cards', 'card': 'card',
+                    'wallet': 'wallet', 'notebook': 'notebook',
+                    'stapler': 'stapler', 'ruler': 'ruler',
+                    'calculator': 'calculator', 'headphones': 'headphones',
                 }
                 config.yolo_class = name_to_coco.get(name_lower, name_lower)
             
@@ -171,13 +177,21 @@ class ObjectDetector:
             )
     
     def detect_objects(self, frame: np.ndarray, 
-                       marker_detector=None) -> Dict[str, DetectedObject]:
+                       marker_detector=None,
+                       marker_rects: list = None,
+                       hand_position: tuple = None) -> Dict[str, DetectedObject]:
         """Main detection loop -- tries YOLO, then color, then contour for each object."""
+        if marker_rects is None:
+            marker_rects = []
+        
         # Run YOLO detection (with frame skipping for performance)
         if self.yolo is not None:
             self._frame_count += 1
             if self._frame_count > self._yolo_skip_frames:
-                self._last_yolo_detections = self.yolo.detect(frame)
+                raw_dets = self.yolo.detect(frame)
+                # Filter out detections that overlap with ArUco markers
+                self._last_yolo_detections = self._filter_marker_overlaps(
+                    raw_dets, marker_rects)
                 self._frame_count = 0
             # else: reuse cached _last_yolo_detections
         else:
@@ -192,15 +206,21 @@ class ObjectDetector:
             
             # Try YOLO detection first
             if self._last_yolo_detections and config.yolo_class:
-                detected_obj = self._detect_by_yolo(config, marker_detector)
+                detected_obj = self._detect_by_yolo(config, marker_detector,
+                                                    hand_position=hand_position)
             
             # Fallback to color/contour detection if YOLO didn't find it
             if detected_obj is None or not detected_obj.visible:
                 if hsv is None:
                     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                    
-                if config.color_name in ('any', 'dark'):
-                    detected_obj = self._detect_by_contour(frame, config, marker_detector)
+                
+                # Pen/pencil/marker: use dedicated elongated-object detector
+                if config.name.lower() in ('pen', 'pencil', 'marker'):
+                    detected_obj = self._detect_pen(frame, config, marker_detector,
+                                                    marker_rects=marker_rects)
+                elif config.color_name in ('any', 'dark'):
+                    detected_obj = self._detect_by_contour(frame, config, marker_detector,
+                                                           marker_rects=marker_rects)
                 elif config.color_name != 'yolo':
                     detected_obj = self._detect_single_object(hsv, frame, config, marker_detector)
                 else:
@@ -225,15 +245,73 @@ class ObjectDetector:
                     
         return self.detected_objects
     
+    @staticmethod
+    def _filter_marker_overlaps(detections: list, marker_rects: list) -> list:
+        """Remove YOLO detections that overlap with ArUco marker areas.
+        
+        Markers should NEVER be recognized as objects -- this is a hard rule.
+        """
+        if not marker_rects:
+            return detections
+        
+        filtered = []
+        for det in detections:
+            x, y, w, h = det['bbox']
+            overlaps_marker = False
+            for mx, my, mw, mh in marker_rects:
+                # Intersection
+                ox = max(0, min(x + w, mx + mw) - max(x, mx))
+                oy = max(0, min(y + h, my + mh) - max(y, my))
+                overlap_area = ox * oy
+                det_area = max(w * h, 1)
+                marker_area = max(mw * mh, 1)
+                # Skip if overlap is significant relative to either area
+                if overlap_area > 0.25 * marker_area or overlap_area > 0.25 * det_area:
+                    overlaps_marker = True
+                    break
+            if not overlaps_marker:
+                filtered.append(det)
+        return filtered
+    
     def _detect_by_yolo(self, config: ObjectConfig,
-                         marker_detector=None) -> Optional[DetectedObject]:
-        """Match a configured object against YOLO results by class name."""
-        # Search through YOLO detections for matching class
+                         marker_detector=None,
+                         hand_position: tuple = None) -> Optional[DetectedObject]:
+        """Match a configured object against YOLO results by class name.
+        
+        When the hand is detected, prioritize detections near the hand.
+        Uses CLASS_ALIASES for non-COCO objects (pen->knife/toothbrush, etc.)
+        """
         target_class = config.yolo_class.lower()
         best_match = None
         
-        for det in self._last_yolo_detections:
-            if det['class_name'].lower() == target_class:
+        # Build list of COCO classes to search for
+        # If target_class is a direct COCO class, search for it.
+        # If not, use aliases (pen -> knife/toothbrush, eraser -> book/remote, etc.)
+        search_classes = []
+        if YOLO_AVAILABLE and target_class in [c.lower() for c in COCO_CLASSES]:
+            search_classes = [target_class]
+        elif YOLO_AVAILABLE and target_class in CLASS_ALIASES:
+            search_classes = [c.lower() for c in CLASS_ALIASES[target_class]]
+        else:
+            search_classes = [target_class]
+        
+        # Collect all candidates matching any of the search classes
+        candidates = [det for det in self._last_yolo_detections
+                      if det['class_name'].lower() in search_classes]
+        
+        if not candidates:
+            return None
+        
+        if hand_position and len(candidates) > 1:
+            # Prefer the detection closest to the hand
+            hx, hy = hand_position
+            candidates.sort(key=lambda d: (
+                (d['center'][0] - hx) ** 2 + (d['center'][1] - hy) ** 2
+            ))
+            best_match = candidates[0]
+        else:
+            # Pick highest confidence
+            for det in candidates:
                 if best_match is None or det['confidence'] > best_match['confidence']:
                     best_match = det
         
@@ -356,12 +434,37 @@ class ObjectDetector:
                         
         return detected
     
+    @staticmethod
+    def _contour_overlaps_marker(cx, cy, bx, by, bw, bh, marker_rects: list) -> bool:
+        """Return True if a contour bbox significantly overlaps any marker rect."""
+        if not marker_rects:
+            return False
+        for mx, my, mw, mh in marker_rects:
+            # Expand marker rect by 20% to catch edge contours
+            pad_x, pad_y = int(mw * 0.2), int(mh * 0.2)
+            ex, ey = mx - pad_x, my - pad_y
+            ew, eh = mw + 2 * pad_x, mh + 2 * pad_y
+            # Check if contour center is inside expanded marker
+            if ex <= cx <= ex + ew and ey <= cy <= ey + eh:
+                return True
+            # Check bbox overlap
+            ox = max(0, min(bx + bw, mx + mw) - max(bx, mx))
+            oy = max(0, min(by + bh, my + mh) - max(by, my))
+            overlap_area = ox * oy
+            det_area = max(bw * bh, 1)
+            if overlap_area > 0.25 * det_area:
+                return True
+        return False
+
     def _detect_by_contour(self, frame: np.ndarray, config: ObjectConfig,
-                            marker_detector=None) -> DetectedObject:
+                            marker_detector=None,
+                            marker_rects: list = None) -> DetectedObject:
         """
         Detect an object using edge/contour detection (for dark or any-color objects).
         Works for phones, mice, keyboards, etc.
         """
+        if marker_rects is None:
+            marker_rects = []
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (7, 7), 0)
         
@@ -393,6 +496,10 @@ class ObjectDetector:
                 if area >= config.min_area:
                     x, y, w, h = cv2.boundingRect(c)
                     aspect = max(w, h) / (min(w, h) + 1)
+                    # Skip contours overlapping ArUco markers
+                    cx_c, cy_c = x + w // 2, y + h // 2
+                    if self._contour_overlaps_marker(cx_c, cy_c, x, y, w, h, marker_rects):
+                        continue
                     # Filter out very elongated shapes (likely edges of table/screen)
                     if aspect < 6:
                         valid_contours.append((c, area))
@@ -421,6 +528,108 @@ class ObjectDetector:
         
         return detected
     
+    def _detect_pen(self, frame: np.ndarray, config: ObjectConfig,
+                     marker_detector=None,
+                     marker_rects: list = None) -> DetectedObject:
+        """Detect a pen/pencil/marker using shape analysis.
+        
+        A pen is thin and elongated -- exactly the shape that generic contour
+        detection rejects. This method specifically looks for high-aspect-ratio
+        dark objects using multiple techniques.
+        Marker areas are excluded so printed ArUco papers are never mistaken
+        for a pen.
+        """
+        if marker_rects is None:
+            marker_rects = []
+        h_frame, w_frame = frame.shape[:2]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        detected = DetectedObject(
+            object_id=config.object_id, name=config.name, color_bgr=config.color_bgr
+        )
+        
+        candidates = []
+        
+        # Strategy 1: Adaptive threshold (dark objects on lighter background)
+        thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                        cv2.THRESH_BINARY_INV, 15, 6)
+        # Use small kernel to preserve thin shapes
+        kernel_small = np.ones((3, 3), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_small, iterations=2)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_small, iterations=1)
+        contours1, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Strategy 2: Edge detection (catches pen outlines)
+        edges = cv2.Canny(blurred, 40, 120)
+        kernel_edge = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel_edge, iterations=2)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel_edge, iterations=1)
+        contours2, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        all_contours = list(contours1) + list(contours2)
+        
+        for c in all_contours:
+            area = cv2.contourArea(c)
+            if area < 300:  # too small
+                continue
+            
+            x, y, w, bh = cv2.boundingRect(c)
+            cx_c, cy_c = x + w // 2, y + bh // 2
+            
+            # === Hard rule: skip anything overlapping a calibration marker ===
+            if self._contour_overlaps_marker(cx_c, cy_c, x, y, w, bh, marker_rects):
+                continue
+            
+            aspect = max(w, bh) / (min(w, bh) + 1)
+            
+            # Pen characteristics: elongated (aspect > 2.5) OR medium-sized dark blob
+            # Also accept a rotated bounding box for diagonal pens
+            if len(c) >= 5:
+                rect = cv2.minAreaRect(c)
+                rw, rh = rect[1]
+                rot_aspect = max(rw, rh) / (min(rw, rh) + 1)
+            else:
+                rot_aspect = aspect
+            
+            # Score: prefer elongated, pen-sized objects
+            is_elongated = rot_aspect >= 2.5 or aspect >= 2.5
+            is_pen_sized = 300 <= area <= 50000  # not too big (not a table edge)
+            is_not_huge = w < w_frame * 0.5 and bh < h_frame * 0.5
+            
+            if is_pen_sized and is_not_huge:
+                # Higher score for more pen-like shapes
+                score = area
+                if is_elongated:
+                    score *= 3.0  # strongly prefer elongated
+                if rot_aspect >= 4:
+                    score *= 2.0  # very pen-like aspect ratio
+                candidates.append((c, score, area))
+        
+        if candidates:
+            # Pick best scoring candidate
+            best_contour, best_score, best_area = max(candidates, key=lambda x: x[1])
+            x, y, w, bh = cv2.boundingRect(best_contour)
+            M = cv2.moments(best_contour)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+            else:
+                cx, cy = x + w // 2, y + bh // 2
+            
+            detected.center = (cx, cy)
+            detected.bounding_box = (x, y, w, bh)
+            detected.visible = True
+            detected.status = ObjectStatus.DETECTED
+            detected.confidence = min(best_area / 2000, 1.0)
+            
+            if marker_detector and marker_detector.is_calibrated():
+                table_pos = marker_detector.screen_to_table((cx, cy))
+                if table_pos:
+                    detected.table_position = table_pos
+        
+        return detected
+
     def get_object(self, object_id: str) -> Optional[DetectedObject]:
         """Get a specific detected object by ID."""
         return self.detected_objects.get(object_id)

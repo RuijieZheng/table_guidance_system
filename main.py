@@ -16,7 +16,8 @@ pipeline well enough for a demo.
 
 Controls:
 - SPACE: Start the procedure / skip calibration
-- R: Reset and start over
+- R: Reset everything and start over
+- W: Reset working region only (re-calibrate markers)
 - Q or ESC: Quit
 - D: Toggle debug info
 - C: Open color calibration tool
@@ -144,7 +145,7 @@ class TableGuidanceSystem:
         print("    1. Just press SPACE to skip calibration")
         print("    2. The camera frame = your workspace")
         print("\n  Then place colored objects and press SPACE to begin")
-        print("\nControls: SPACE=Start/Skip, R=Reset, Q=Quit, D=Debug, C=Calibrate")
+        print("\nControls: SPACE=Start/Skip, R=Reset, W=Re-calibrate, Q=Quit, D=Debug")
         print("=" * 50 + "\n")
         
         return True
@@ -200,7 +201,14 @@ class TableGuidanceSystem:
         # 2. Detect objects
         # Pass marker_detector only if using markers and calibrated
         md = self.marker_detector if (self.use_markers and self.marker_detector.is_calibrated()) else None
-        detected_objects = self.object_detector.detect_objects(frame, md)
+        # Get marker rects so YOLO won't misidentify markers as objects
+        marker_rects = self.marker_detector.get_marker_rects() if self.use_markers else []
+        # Get hand position for priority (detected below, but use previous frame's if available)
+        hand_pos = None
+        if hasattr(self, '_last_hand_pos'):
+            hand_pos = self._last_hand_pos
+        detected_objects = self.object_detector.detect_objects(
+            frame, md, marker_rects=marker_rects, hand_position=hand_pos)
         
         # 3. In no-marker mode, convert screen coords to normalized (0-1) "table" coords
         if not self.use_markers:
@@ -214,6 +222,8 @@ class TableGuidanceSystem:
         
         # 4. Track hand
         hand_info = self.hand_tracker.process_frame(frame, md)
+        # Cache hand position for next frame's object detection priority
+        self._last_hand_pos = hand_info.palm_center if hand_info.detected else None
         
         # 5. Determine hand-object interaction
         hand_near_object = False
@@ -230,6 +240,23 @@ class TableGuidanceSystem:
                     obj.center, 
                     (obj.bounding_box[2], obj.bounding_box[3])
                 )
+        
+        # 5.5 Hand priority: when the hand is holding the current object,
+        # snap its position to the hand. This way the object "follows" the
+        # hand while being carried, even if YOLO loses track of it briefly.
+        if hand_near_object and current_obj_id and hand_info.detected:
+            obj = detected_objects.get(current_obj_id)
+            if obj:
+                hx, hy = hand_info.palm_center
+                obj.center = (hx, hy)
+                # Update table position to match hand
+                if md and md.is_calibrated():
+                    table_pos = md.screen_to_table((hx, hy))
+                    if table_pos:
+                        obj.table_position = table_pos
+                elif not self.use_markers:
+                    obj.table_position = (hx / w, hy / h)
+                obj.status = ObjectStatus.BEING_MOVED
                 
         # 6. Update state
         object_positions = {}
@@ -263,21 +290,29 @@ class TableGuidanceSystem:
         # This shows ALL objects YOLO sees, not just the ones in our procedure --
         # makes the demo more impressive and proves the detection actually works.
         # 7.5 Draw YOLO-detected objects with their actual names
-        for gen_obj in self.object_detector.general_objects:
-            if gen_obj.visible:
-                x, y, bw, bh = gen_obj.bounding_box
-                color = gen_obj.color_bgr
-                label = f"{gen_obj.name} {gen_obj.confidence:.0%}"
-                cv2.rectangle(output, (x, y), (x + bw, y + bh), color, 2)
-                # Label background for readability
-                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-                cv2.rectangle(output, (x, y - th - 8), (x + tw + 4, y), color, -1)
-                cv2.putText(output, label, (x + 2, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        # (marker overlaps already filtered at detection time)
+        # Don't show YOLO labels during calibration -- they're distracting
+        # and markers get misidentified as random objects.
+        if self.state_manager.procedure_state != ProcedureState.CALIBRATING:
+            for gen_obj in self.object_detector.general_objects:
+                if gen_obj.visible:
+                    x, y, bw, bh = gen_obj.bounding_box
+                    color = gen_obj.color_bgr
+                    label = f"{gen_obj.name} {gen_obj.confidence:.0%}"
+                    cv2.rectangle(output, (x, y), (x + bw, y + bh), color, 2)
+                    # Label background for readability
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                    cv2.rectangle(output, (x, y - th - 8), (x + tw + 4, y), color, -1)
+                    cv2.putText(output, label, (x + 2, y - 5),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
         
         # 8. Always draw hand tracking overlay when hand is detected
         if hand_info.detected:
             output = self.hand_tracker.draw_debug(output, draw_landmarks=True)
+        
+        # 8.5. During calibration, show live marker detection feedback
+        if self.state_manager.procedure_state == ProcedureState.CALIBRATING and self.use_markers:
+            output = self.marker_detector.draw_calibration_feedback(output)
         
         # 9. Debug overlays
         if self.debug_mode:
@@ -342,6 +377,14 @@ class TableGuidanceSystem:
         elif key == ord('r'):  # R - Reset
             print("\nResetting procedure...")
             self.state_manager.reset()
+            self.marker_detector.reset()
+            self.use_markers = True
+            self.state_manager.start_calibration()
+            
+        elif key == ord('w'):  # W - Reset working region only
+            print("\nRe-calibrating working region...")
+            self.marker_detector.reset()
+            self.use_markers = True
             self.state_manager.start_calibration()
             
         elif key == ord('d'):  # D - Toggle debug

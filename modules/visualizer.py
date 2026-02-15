@@ -34,7 +34,7 @@ from .hand_tracker import HandInfo, HandState
 class VisualizationConfig:
     """Configuration for visualization appearance."""
     # Colors (BGR)
-    color_boundary: Tuple[int, int, int] = (0, 255, 0)  # Green
+    color_boundary: Tuple[int, int, int] = (200, 200, 100)  # Light cyan-ish
     color_target_pending: Tuple[int, int, int] = (255, 165, 0)  # Orange
     color_target_active: Tuple[int, int, int] = (0, 255, 255)  # Yellow
     color_target_complete: Tuple[int, int, int] = (0, 255, 0)  # Green
@@ -46,7 +46,7 @@ class VisualizationConfig:
     color_error: Tuple[int, int, int] = (0, 0, 255)  # Red
     
     # Sizes
-    boundary_thickness: int = 3
+    boundary_thickness: int = 1
     target_thickness: int = 2
     arrow_thickness: int = 3
     font_scale: float = 0.7
@@ -142,24 +142,28 @@ class Visualizer:
         
         boundary = marker_detector.get_boundary_corners()
         if boundary is not None:
-            # Draw filled semi-transparent polygon
+            # Very light tinted fill so the working area is subtly visible
             overlay = frame.copy()
-            cv2.fillPoly(overlay, [boundary], (50, 50, 50))
-            cv2.addWeighted(overlay, 0.2, output, 0.8, 0, output)
+            cv2.fillPoly(overlay, [boundary], (80, 70, 50))
+            cv2.addWeighted(overlay, 0.10, output, 0.90, 0, output)
             
-            # Draw boundary lines
-            cv2.polylines(output, [boundary], True, 
-                         self.config.color_boundary, 
-                         self.config.boundary_thickness)
+            # Dashed boundary lines -- light and non-intrusive
+            pts = [tuple(boundary[i][0]) for i in range(len(boundary))]
+            pts.append(pts[0])  # close the polygon
+            for j in range(len(pts) - 1):
+                self._draw_dashed_line(output, pts[j], pts[j + 1],
+                                       self.config.color_boundary,
+                                       self.config.boundary_thickness,
+                                       dash_len=12, gap_len=8)
                          
-            # Draw corner labels
+            # Small corner dots with labels
             corner_names = ['TL(0)', 'TR(1)', 'BR(2)', 'BL(3)']
             for i, name in enumerate(corner_names):
                 pt = tuple(boundary[i][0])
-                cv2.circle(output, pt, 8, self.config.color_boundary, -1)
-                cv2.putText(output, name, (pt[0] + 10, pt[1] - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, 
-                           self.config.color_boundary, 2)
+                cv2.circle(output, pt, 5, self.config.color_boundary, -1)
+                cv2.putText(output, name, (pt[0] + 8, pt[1] - 8),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, 
+                           self.config.color_boundary, 1)
         else:
             # Show missing markers warning
             if status.missing_markers:
@@ -615,7 +619,7 @@ class Visualizer:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, hand_color, 1)
         
         # Controls hint
-        controls = "SPACE: Start | R: Reset | Q: Quit | C: Calibrate Colors"
+        controls = "SPACE: Start | R: Reset | W: Re-calibrate | Q: Quit"
         cv2.putText(output, controls, (w - 450, h - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
                    
@@ -721,3 +725,24 @@ class Visualizer:
         
         # Text
         cv2.putText(frame, text, (x, y), font, font_scale, color, thickness)
+
+    @staticmethod
+    def _draw_dashed_line(frame, pt1, pt2, color, thickness=1,
+                          dash_len=10, gap_len=6):
+        """Draw a dashed line between two points."""
+        x1, y1 = int(pt1[0]), int(pt1[1])
+        x2, y2 = int(pt2[0]), int(pt2[1])
+        dist = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        if dist == 0:
+            return
+        dx = (x2 - x1) / dist
+        dy = (y2 - y1) / dist
+        pos = 0.0
+        while pos < dist:
+            seg_end = min(pos + dash_len, dist)
+            sx = int(x1 + dx * pos)
+            sy = int(y1 + dy * pos)
+            ex = int(x1 + dx * seg_end)
+            ey = int(y1 + dy * seg_end)
+            cv2.line(frame, (sx, sy), (ex, ey), color, thickness)
+            pos += dash_len + gap_len

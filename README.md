@@ -10,7 +10,7 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 
 ### Features
 
-- **ArUco Marker-Based Table Detection**: Uses 4 fiducial markers to define the working area and compute perspective transformation (homography). Can be skipped for quick demo mode.
+- **ArUco Marker-Based Table Detection**: Uses 4 fiducial markers to define the working area and compute perspective transformation (homography). **Dynamically tracked** — the boundary updates in real-time if markers move or the camera angle changes. Can be skipped for quick demo mode.
 - **YOLO Object Detection (Primary)**: YOLOv5s ONNX model identifies 80 COCO classes (cup, bottle, cell phone, mouse, keyboard, laptop, etc.) — each object is labeled by name with confidence score
 - **Color-Based Detection (Fallback)**: HSV segmentation for color-specific objects when YOLO model is unavailable
 - **Hand Tracking (Bonus)**: MediaPipe-based hand tracking that detects gestures *and* whether the user is holding (pinch/grab) an object. The HUD shows `Hand Near Object` and `Holding: <object>` to make interactions explicit.
@@ -138,8 +138,10 @@ python main.py
 ```
 
 **Two modes:**
-- **With Markers**: Place 4 ArUco markers at table corners → system auto-calibrates → press SPACE → press SPACE again to start
-- **Without Markers (recommended for quick demo)**: Just press SPACE to skip calibration → press SPACE again to start. The camera frame becomes your workspace.
+- **With Markers (recommended for precision)**: Print 4 ArUco markers and place one at each table corner → the system auto-detects them and computes a perspective-corrected working area → press SPACE to confirm → press SPACE again to start. **The boundary updates dynamically** — if you nudge a marker or shift the camera, the working area adjusts in real-time.
+- **Without Markers (quick demo)**: Just press SPACE to skip calibration → press SPACE again to start. The camera frame becomes your workspace.
+
+> **Tip — re-calibrate anytime**: Press `W` during a procedure to reset the working region without losing your task progress. The system will re-enter calibration mode so you can reposition markers.
 
 **Command-line options:**
 ```bash
@@ -154,7 +156,8 @@ python main.py --generate-markers   # Generate markers only
 | Key | Action |
 |-----|--------|
 | SPACE | Start the procedure / Skip calibration |
-| R | Reset and start over |
+| R | Reset everything and start over |
+| W | Reset working region only (re-calibrate markers) |
 | Q | Quit the application |
 | D | Toggle debug mode |
 | C | Open color calibration tool |
@@ -162,7 +165,7 @@ python main.py --generate-markers   # Generate markers only
 
 ## Task Workflow
 
-1. **Calibration** (optional): System detects all 4 corner markers and computes table homography. Press SPACE to skip.
+1. **Calibration** (optional): System detects all 4 corner markers and computes table homography. The detected boundary is shown as a light dashed line that updates in real-time as markers move. Press SPACE to confirm, or press SPACE to skip.
 2. **Initialization**: User places objects (phone, pen, bottle) randomly on the table
 3. **Task 1**: Move the Phone to the Center
 4. **Task 2**: Move the Pen to the Top-Right zone
@@ -249,21 +252,42 @@ The system uses **YOLOv5s** (via ONNX Runtime) as the primary detection method:
 
 ## Demo Video
 
-Demo (Google Drive): https://drive.google.com/file/d/1AK7lB2fSblzjdCt8OvcA9mTn3GGU87ad/view?usp=drive_link
+Demo (Google Drive): https://drive.google.com/file/d/1SOLPX6SBr4WlVeB99uA5Lf7X-0swFirK/view?usp=drive_link
 
-Suggested timestamps:
-- 00:00–00:05 — Title + repo link
-- 00:06–00:12 — Calibration (or skip) and workspace setup
-- 00:13–00:35 — Steps 1–3: guidance arrow, object move, `In Zone` feedback
-- 00:36–00:45 — Hand interaction: `Hand Near Object` → `Holding: <object>`
-- 00:46–00:55 — Robustness demo (brief occlusion / recovery) + final success
+## Report
 
-The video should demonstrate:
-1. Calibration phase (marker detection)
-2. Object placement
-3. Step-by-step guidance with visual feedback — include the guidance arrow and HUD
-4. Hand interaction: show `Hand Near Object` and `Holding: <object>` being triggered when you pinch/grab
-5. Completion celebration and the final success overlay (`All Done -- Table Set Successfully!`)
+Google Doc: https://docs.google.com/document/d/1vaoF9CIRhwjphRI9-OQYeiiAiR09r59iXvAKTarlhDk/edit?usp=drive_link
+
+## Dynamic Working Area Tracking
+
+The "working area" (table boundary) is **dynamically tracked every frame**:
+
+- Each camera frame is scanned for the 4 ArUco corner markers (IDs 0-3)
+- When all 4 are visible, the homography is recomputed instantly
+- If the camera moves, markers shift, or the table is bumped — the boundary and all target zones update in real-time
+- A light dashed boundary line shows the detected working area without cluttering the view
+- If a marker is temporarily occluded, the last valid homography is kept until all 4 reappear
+
+This means you can place the printed markers, start the task, and even adjust the camera angle mid-task — the system adapts.
+
+### Marker Setup
+
+1. Generate markers: `python main.py --generate-markers`
+2. Print the 4 images from the `markers/` folder (or display on a phone/tablet)
+3. Place them at the 4 corners of your working area:
+   - **ID 0** → Top-Left
+   - **ID 1** → Top-Right
+   - **ID 2** → Bottom-Right
+   - **ID 3** → Bottom-Left
+4. The system detects them automatically — a light dashed boundary appears
+5. Press SPACE to confirm, then SPACE again to start
+
+### Tips for Reliable Detection
+
+- **Printed markers**: High contrast on white paper works best
+- **Phone/tablet markers**: Set brightness to max, avoid direct glare toward camera
+- **Marker size**: At least ~5 cm for reliable detection at arm's length
+- **Re-calibrate**: Press `W` anytime to reset the working region
 
 ## Evaluation Criteria Met
 
