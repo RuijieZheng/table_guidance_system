@@ -26,6 +26,9 @@ models/
 *.task
 *.onnx
 
+# Demo video (local)
+table_guidance_system.mp4
+
 # Test files
 test_*.py
 
