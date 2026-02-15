@@ -119,6 +119,12 @@ class SystemStatus:
     user_moving_item: bool = False
     object_in_target: bool = False
     
+    # Hand tracking
+    hand_detected: bool = False
+    hand_state: str = ""
+    hand_near_target: bool = False
+    holding_object: bool = False
+    
     # Completion
     step_just_completed: bool = False
     procedure_completed: bool = False
@@ -358,13 +364,18 @@ class StateManager:
     def _update_status(self):
         """Update the status object for UI display."""
         self.status.procedure_state = self.procedure_state
-        self.status.current_step_num = self.current_step_index + 1
+        
+        # Cap step counter at total when procedure is done
+        if self.procedure_state == ProcedureState.COMPLETED:
+            self.status.current_step_num = self.status.total_steps
+        else:
+            self.status.current_step_num = self.current_step_index + 1
         
         step = self.get_current_step()
         if step:
             self.status.current_instruction = f"Step {step.step_number}: {step.instruction}"
         elif self.procedure_state == ProcedureState.COMPLETED:
-            self.status.current_instruction = "Table Set Successfully! 🎉"
+            self.status.current_instruction = "All Done -- Table Set Successfully!"
         else:
             self.status.current_instruction = ""
             

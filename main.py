@@ -217,10 +217,15 @@ class TableGuidanceSystem:
         
         # 5. Determine hand-object interaction
         hand_near_object = False
+        hand_near_target = False
         current_obj_id = self.state_manager.get_current_object_id()
         if current_obj_id and hand_info.detected:
             obj = detected_objects.get(current_obj_id)
             if obj and obj.visible:
+                # Check if hand is near the target object at all
+                prox = max(obj.bounding_box[2], obj.bounding_box[3]) // 2 + self.hand_tracker.proximity_radius
+                hand_near_target = self.hand_tracker.is_near_point(obj.center, prox)
+                # Check if hand is actually grabbing/pinching it
                 hand_near_object = self.hand_tracker.is_interacting_with_object(
                     obj.center, 
                     (obj.bounding_box[2], obj.bounding_box[3])
@@ -239,14 +244,19 @@ class TableGuidanceSystem:
             missing_markers=missing_markers
         )
         
+        # Feed hand tracking info into the status so the HUD can display it
+        self.state_manager.status.hand_detected = hand_info.detected
+        self.state_manager.status.hand_state = hand_info.state.value if hand_info.detected else ""
+        self.state_manager.status.hand_near_target = hand_near_target
+        self.state_manager.status.holding_object = hand_near_object
+        
         # 7. Render visualization
-        hand_pos = hand_info.palm_center if hand_info.detected else None
         output = self.visualizer.render(
             frame,
             self.marker_detector,
             self.state_manager,
             detected_objects,
-            hand_pos,
+            hand_info=hand_info,
             use_markers=self.use_markers
         )
         # Show general YOLO detections (all objects YOLO sees) with labeled bounding boxes.

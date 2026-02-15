@@ -27,6 +27,7 @@ from .state_manager import (
 )
 from .marker_detector import MarkerDetector
 from .object_detector import DetectedObject, ObjectStatus
+from .hand_tracker import HandInfo, HandState
 
 
 @dataclass
@@ -72,7 +73,7 @@ class Visualizer:
                marker_detector: MarkerDetector,
                state_manager: StateManager,
                detected_objects: Dict[str, DetectedObject],
-               hand_position: Optional[Tuple[int, int]] = None,
+               hand_info: HandInfo = None,
                use_markers: bool = True) -> np.ndarray:
         """Main render call -- draws all AR overlays on the camera frame."""
         self.frame_count += 1
@@ -114,9 +115,13 @@ class Visualizer:
                     output, state_manager, detected_objects, w, h
                 )
         
-        # Layer 5: Hand indicator
-        if hand_position and status.user_moving_item:
-            output = self._draw_hand_indicator(output, hand_position)
+        # Layer 5: Hand interaction feedback
+        if hand_info and hand_info.detected:
+            hand_pos = hand_info.palm_center
+            if status.holding_object:
+                output = self._draw_hand_holding(output, hand_pos, status.target_object_name)
+            elif status.hand_near_target:
+                output = self._draw_hand_near_object(output, hand_pos, status.target_object_name)
         
         # Layer 6: Status overlay
         output = self._draw_status_overlay(output, status, state_manager)
@@ -198,7 +203,7 @@ class Visualizer:
             if screen_pos:
                 label = zone.name
                 if zone.zone_id in completed_zones:
-                    label += " ✓"
+                    label += " [Done]"
                 self._draw_text_with_bg(output, label, 
                                         (screen_pos[0] - 30, screen_pos[1] + 5),
                                         color, font_scale=0.5)
@@ -485,20 +490,44 @@ class Visualizer:
         pts = np.array([p1, p2, p3], dtype=np.int32)
         cv2.fillPoly(frame, [pts], self.config.color_arrow)
     
+    def _draw_hand_holding(self, frame: np.ndarray,
+                            hand_pos: Tuple[int, int],
+                            object_name: str) -> np.ndarray:
+        """Draw indicator when hand is holding/grabbing the target object."""
+        output = frame.copy()
+        pulse = (np.sin(self.frame_count * 0.25) + 1) / 2
+        radius = int(35 + 8 * pulse)
+        
+        # Green pulsing ring = actively holding
+        cv2.circle(output, hand_pos, radius, (0, 255, 0), 3)
+        label = f"Holding {object_name}"
+        self._draw_text_with_bg(output, label,
+                                (hand_pos[0] - 60, hand_pos[1] - radius - 15),
+                                (0, 255, 0), font_scale=0.6)
+        return output
+    
+    def _draw_hand_near_object(self, frame: np.ndarray,
+                               hand_pos: Tuple[int, int],
+                               object_name: str) -> np.ndarray:
+        """Draw indicator when hand is near but not yet grabbing."""
+        output = frame.copy()
+        cv2.circle(output, hand_pos, 35, (0, 255, 255), 2)
+        label = f"Near {object_name} - Grab it!"
+        self._draw_text_with_bg(output, label,
+                                (hand_pos[0] - 70, hand_pos[1] - 50),
+                                (0, 255, 255), font_scale=0.5)
+        return output
+    
     def _draw_hand_indicator(self, frame: np.ndarray,
                               hand_pos: Tuple[int, int]) -> np.ndarray:
-        """Draw indicator showing hand is interacting."""
+        """Fallback hand interaction indicator."""
         output = frame.copy()
-        
-        # Draw pulsing ring around hand
         pulse = (np.sin(self.frame_count * 0.2) + 1) / 2
         radius = int(30 + 10 * pulse)
-        
         cv2.circle(output, hand_pos, radius, (0, 255, 255), 2)
         cv2.putText(output, "Moving...", 
                    (hand_pos[0] - 30, hand_pos[1] - radius - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-                   
         return output
     
     def _draw_status_overlay(self, frame: np.ndarray,
@@ -568,6 +597,22 @@ class Visualizer:
             cv2.circle(output, (230, y_bottom), 8, self.config.color_success, -1)
             cv2.putText(output, "In Zone!", (245, y_bottom + 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.config.color_success, 1)
+        
+        # Hand tracking indicator
+        hand_x = 340
+        if status.hand_detected:
+            if status.holding_object:
+                hand_color = self.config.color_success
+                hand_text = f"Holding: {status.target_object_name}"
+            elif status.hand_near_target:
+                hand_color = (0, 255, 255)
+                hand_text = "Hand Near Object"
+            else:
+                hand_color = (180, 180, 180)
+                hand_text = f"Hand: {status.hand_state}"
+            cv2.circle(output, (hand_x, y_bottom), 8, hand_color, -1)
+            cv2.putText(output, hand_text, (hand_x + 15, y_bottom + 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, hand_color, 1)
         
         # Controls hint
         controls = "SPACE: Start | R: Reset | Q: Quit | C: Calibrate Colors"
