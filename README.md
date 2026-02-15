@@ -13,7 +13,7 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 - **ArUco Marker-Based Table Detection**: Uses 4 fiducial markers to define the working area and compute perspective transformation (homography). Can be skipped for quick demo mode.
 - **YOLO Object Detection (Primary)**: YOLOv5s ONNX model identifies 80 COCO classes (cup, bottle, cell phone, mouse, keyboard, laptop, etc.) — each object is labeled by name with confidence score
 - **Color-Based Detection (Fallback)**: HSV segmentation for color-specific objects when YOLO model is unavailable
-- **Hand Tracking (Bonus)**: MediaPipe-based hand tracking to detect when users are interacting with objects
+- **Hand Tracking (Bonus)**: MediaPipe-based hand tracking that detects gestures *and* whether the user is holding (pinch/grab) an object. The HUD shows `Hand Near Object` and `Holding: <object>` to make interactions explicit.
 - **Perspective-Warped Visualizations**: Target zones are rendered with proper perspective to align with the table plane
 - **State Management**: Tracks procedure progress through calibration → initialization → task execution → completion
 - **Interactive Guidance**: Dynamic arrows pointing from objects to their target positions
@@ -83,6 +83,17 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
    source venv/bin/activate
    ```
 
+   Alternatively, using Conda (recommended if you already use Anaconda/Miniconda):
+   ```bash
+   conda create -n project python=3.11 -y
+   conda activate project
+   pip install -r requirements.txt
+   ```
+   Or run without activating the env:
+   ```bash
+   conda run -n project --no-capture-output python main.py
+   ```
+
 3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
@@ -109,7 +120,20 @@ A Physical Task Guidance System that uses computer vision and AR overlays to gui
 
 ### Running the System
 
+Recommended (Conda):
 ```bash
+conda activate project
+python main.py
+```
+
+No-activation one-liner:
+```bash
+conda run -n project --no-capture-output python main.py
+```
+
+(or) Virtualenv:
+```bash
+venv\Scripts\activate  # Windows
 python main.py
 ```
 
@@ -143,7 +167,7 @@ python main.py --generate-markers   # Generate markers only
 3. **Task 1**: Move the Phone to the Center
 4. **Task 2**: Move the Pen to the Top-Right zone
 5. **Task 3**: Move the Bottle to the Top-Left zone
-6. **Completion**: "Table Set Successfully!" message displayed
+6. **Completion**: Final success overlay (`All Done -- Table Set Successfully!`) is displayed. (Note: in-overlay text uses ASCII-friendly messages — emojis are shown in the console only.)
 
 YOLO continuously identifies all visible objects on the desk (labeled with name + confidence).
 
@@ -230,8 +254,9 @@ The system uses **YOLOv5s** (via ONNX Runtime) as the primary detection method:
 The video should demonstrate:
 1. Calibration phase (marker detection)
 2. Object placement
-3. Step-by-step guidance with visual feedback
-4. Completion celebration
+3. Step-by-step guidance with visual feedback — include the guidance arrow and HUD
+4. Hand interaction: show `Hand Near Object` and `Holding: <object>` being triggered when you pinch/grab
+5. Completion celebration and the final success overlay (`All Done -- Table Set Successfully!`)
 
 ## Evaluation Criteria Met
 
